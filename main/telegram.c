@@ -6,14 +6,13 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "esp_crt_bundle.h"
-#include "lwip/sockets.h"
-#include "lwip/inet.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/net_sockets.h"
 #include "esp_desync.h"
 #include "telegram.h"
+#include "net_utils.h"
 #include "app_config.h"
 
 static const char *TAG = "telegram";
@@ -44,34 +43,12 @@ typedef struct {
 
 static int parse_ip_list(const char *list, uint32_t *out, int max_addrs)
 {
-    int n = 0;
-    const char *p = list;
-
-    while (p != NULL && *p != '\0' && n < max_addrs) {
-        while (*p == ' ' || *p == ',' || *p == ';') {
-            p++;
-        }
-        if (*p == '\0') {
-            break;
-        }
-        char buf[16];
-        size_t i = 0;
-        while (*p != '\0' && *p != ',' && *p != ';' && *p != ' ' && i < sizeof(buf) - 1) {
-            buf[i++] = *p++;
-        }
-        buf[i] = '\0';
-        struct in_addr a;
-        if (i > 0 && inet_pton(AF_INET, buf, &a) == 1) {
-            out[n++] = a.s_addr;
-        }
-    }
-    return n;
+    return net_parse_ip_list(list, out, max_addrs);
 }
 
 static void set_last_endpoint(uint32_t ip_be)
 {
-    const uint8_t *b = (const uint8_t *)&ip_be;
-    snprintf(s_last_endpoint, sizeof(s_last_endpoint), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    net_format_ip(ip_be, s_last_endpoint, sizeof(s_last_endpoint));
 }
 
 /* Tries CFG_TG_API_IPS (or the built-in list) first, then DNS. Each candidate
@@ -438,21 +415,7 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
 
 static void url_encode(const char *s, char *out, size_t out_sz)
 {
-    static const char hex[] = "0123456789ABCDEF";
-    size_t o = 0;
-
-    for (; *s && o + 4 < out_sz; s++) {
-        unsigned char c = (unsigned char)*s;
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
-            out[o++] = (char)c;
-        } else {
-            out[o++] = '%';
-            out[o++] = hex[c >> 4];
-            out[o++] = hex[c & 0x0f];
-        }
-    }
-    out[o] = 0;
+    net_url_encode(s, out, out_sz);
 }
 
 int tg_send_message(int64_t chat_id, const char *text)

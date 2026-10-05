@@ -1,53 +1,146 @@
 name: release
 
 on:
+  pull_request:
+    branches: [ releases ]
   push:
-    tags: [ 'v*' ]
+    branches: [ releases ]
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   release:
-    name: Build and publish
+    name: publish release
+    needs: [ tests ]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build with ESP-IDF
-        uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.3.6
-          target: esp32
-          path: '.'
+          fetch-depth: 0
 
-      - name: Prepare esptool
+      - name: Read version
+        id: v
+        run: |
+          if [ ! -f VERSION ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No VERSION file, nothing to release"
+          else
+            echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if tag already exists
+        id: tag
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag v${{ steps.v.outputs.version }} already exists, skipping release"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download firmware
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-bins
+          path: firmware
+
+      - name: Install esptool
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         run: |
           python3 -m venv .esptool
           .esptool/bin/pip install --quiet esptool
 
-      - name: Create merged firmware image
+      - name: Create merged image
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         run: |
           .esptool/bin/python -m esptool --chip esp32 merge_bin \
-            -o esp32-zapret-merged.bin --flash_mode dio --flash_size 4MB \
-            0x1000 build/bootloader/bootloader.bin \
-            0x8000 build/partition_table/partition-table.bin \
-            0x10000 build/esp32-zapret.bin
+            -o firmware/esp32-zapret-merged.bin --flash_mode dio --flash_size 4MB \
+            0x1000 firmware/bootloader.bin \
+            0x8000 firmware/partition-table.bin \
+            0x10000 firmware/esp32-zapret.bin
 
-      - name: Pack firmware files
+      - name: Assemble release archive
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
-          mkdir -p release
-          cp build/bootloader/bootloader.bin release/
-          cp build/partition_table/partition-table.bin release/
-          cp build/esp32-zapret.bin release/
-          cp esp32-zapret-merged.bin release/
-          cd release
-          zip -r ../esp32-zapret-firmware.zip .
+          set -euo pipefail
+          pkg="pkg/esp32-zapret"
+          mkdir -p "$pkg/firmware"
+          for f in main components tests tools README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults .gitignore .gitattributes; do
+            cp -r "$f" "$pkg/"
+          done
+          cp firmware/bootloader.bin firmware/partition-table.bin firmware/esp32-zapret.bin firmware/esp32-zapret-merged.bin "$pkg/firmware/"
+          {
+            printf 'esp32-zapret firmware (v%s)\n' "$VERSION"
+            printf 'Built by GitHub Actions from tag v%s.\n\n' "$VERSION"
+            printf 'WARNING: this build uses placeholder credentials (empty Wi-Fi/token).\n'
+            printf 'Build from source with your own main/secrets.h for real use - see INSTALL_RU.md.\n\n'
+            printf 'Files:\n'
+            printf '  bootloader.bin, partition-table.bin, esp32-zapret.bin - for esptool/flash.bat\n'
+            printf '  esp32-zapret-merged.bin - single image, flash at 0x0\n'
+          } > "$pkg/firmware/README.txt"
+          {
+            printf '@echo off\r\n'
+            printf 'setlocal\r\n'
+            printf 'set PORT=%%~1\r\n'
+            printf 'if "%%PORT%%"=="" set PORT=COM3\r\n'
+            printf 'set ESPTOOL=esptool\r\n'
+            printf '%%ESPTOOL%% version >nul 2>nul\r\n'
+            printf 'if errorlevel 1 set ESPTOOL=esptool.py\r\n'
+            printf '%%ESPTOOL%% version >nul 2>nul\r\n'
+            printf 'if errorlevel 1 (\r\n'
+            printf '  echo [!] esptool not found. Install: pip install esptool\r\n'
+            printf '  echo [!] Or flash esp32-zapret-merged.bin at 0x0 with any ESP flash tool.\r\n'
+            printf '  pause\r\n'
+            printf '  exit /b 1\r\n'
+            printf ')\r\n'
+            printf 'echo Flashing esp32-zapret to %%PORT%% ...\r\n'
+            printf '%%ESPTOOL%% --chip esp32 --port %%PORT%% --baud 460800 write_flash --flash_mode dio --flash_size 4MB 0x1000 bootloader.bin 0x8000 partition-table.bin 0x10000 esp32-zapret.bin\r\n'
+            printf 'pause\r\n'
+          } > "$pkg/firmware/flash.bat"
+          (cd pkg && zip -r "../esp32-zapret-v${VERSION}.zip" esp32-zapret)
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            esp32-zapret-merged.bin
-            esp32-zapret-firmware.zip
-          generate_release_notes: true
+      - name: Extract release notes from CHANGELOG
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          awk -v ver="$VERSION" 'BEGIN{f=0} /^## \[/{ if (f) exit; if (index($0, "[" ver "]")) f=1 } f' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "Release v${VERSION}" > notes.md
+          fi
+          printf '\n---\nRelease firmware assets are built with placeholder credentials.\nBuild from source with your own secrets.h for real use (see INSTALL_RU.md).\n' >> notes.md
+
+      - name: Create and push tag
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "esp32-zapret v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Publish GitHub release
+        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file notes.md \
+            "firmware/esp32-zapret-merged.bin" \
+            "esp32-zapret-v${VERSION}.zip"

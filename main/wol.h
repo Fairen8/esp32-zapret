@@ -8,7 +8,6 @@
 extern "C" {
 #endif
 
-bool wol_parse_mac(const char *s, uint8_t out[6]);
 int wol_send(const char *mac_str, const char *broadcast, uint16_t port);
 
 #ifdef __cplusplus

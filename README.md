@@ -1,7 +1,7 @@
 # esp32-zapret
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![build](https://github.com/Fairen8/esp32-zapret/actions/workflows/build.yml/badge.svg)](https://github.com/Fairen8/esp32-zapret/actions/workflows/build.yml)
+[![tests](https://github.com/Fairen8/esp32-zapret/actions/workflows/tests.yml/badge.svg)](https://github.com/Fairen8/esp32-zapret/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/Fairen8/esp32-zapret?include_prereleases&label=release)](https://github.com/Fairen8/esp32-zapret/releases)
 
 Мини-аналог [zapret](https://github.com/bol-van/zapret) для ESP32: обход
@@ -179,6 +179,19 @@ tools/win-build.ps1   сборка на Windows из пути с кирилли�
 - [ ] DoH / DNS-антиподмена
 - [ ] настройки в NVS + Web UI
 - [ ] ESP32-S3/C3 (LwIP-часть работает без изменений)
+
+## CI/CD и релизы
+
+- Пуш в `main` запускает набор задач: юнит-тесты (хостовые), статанализ, гигиена
+  репозитория (нет секретов/бинарников, `VERSION` = `CHANGELOG`) и сборка ESP-IDF
+  в двух конфигурациях.
+- Релиз идёт через PR `main` → `releases`: те же проверки выполняются как
+  обязательные, а после мержа автоматически публикуется релиз по файлу `VERSION`.
+- Публикация идемпотентна: если тег `vX.Y.Z` уже существует, шаг релиза
+  пропускается. Артефакты: `esp32-zapret-merged.bin` и архив с исходниками,
+  `INSTALL_RU.md` и прошивкой.
+- Выпуск версии: поднять `VERSION`, добавить секцию в `CHANGELOG.md`, открыть PR
+  в `releases`, дождаться зелёных проверок и смержить.
 
 ## Безопасность и право
 

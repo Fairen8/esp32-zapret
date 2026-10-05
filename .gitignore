@@ -8,6 +8,10 @@ dependencies.lock
 
 *.log
 .vscode/
+tests/host/tls_tests
+tests/host/net_tests
+tests/host/*.exe
+tests/host/*.pdb
 
 # never commit real credentials
 main/secrets.h

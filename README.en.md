@@ -1,7 +1,7 @@
 # esp32-zapret
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![build](https://github.com/Fairen8/esp32-zapret/actions/workflows/build.yml/badge.svg)](https://github.com/Fairen8/esp32-zapret/actions/workflows/build.yml)
+[![tests](https://github.com/Fairen8/esp32-zapret/actions/workflows/tests.yml/badge.svg)](https://github.com/Fairen8/esp32-zapret/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/Fairen8/esp32-zapret?include_prereleases&label=release)](https://github.com/Fairen8/esp32-zapret/releases)
 
 A tiny [zapret](https://github.com/bol-van/zapret)-style anti-DPI tool for the
@@ -166,6 +166,19 @@ If TTL does not help, try `/fool md5sig`, then `fake` without split, then
 - [ ] DoH / DNS anti-spoofing
 - [ ] NVS settings + Web UI
 - [ ] ESP32-S3/C3 (the LwIP part works unchanged)
+
+## CI/CD and releases
+
+- Every push to `main` runs a set of tasks: host unit tests, static analysis,
+  repository hygiene (no secrets/binaries tracked, `VERSION` matches `CHANGELOG`)
+  and ESP-IDF builds in two configurations.
+- Releases go through a `main` → `releases` PR: the same checks are required,
+  and after the merge a release is published automatically based on `VERSION`.
+- Publishing is idempotent: if tag `vX.Y.Z` already exists, the release step is
+  skipped. Assets: `esp32-zapret-merged.bin` and an archive with sources,
+  `INSTALL_RU.md` and firmware.
+- To cut a version: bump `VERSION`, add a `CHANGELOG.md` section, open a PR to
+  `releases`, wait for green checks and merge.
 
 ## Security and legal
 

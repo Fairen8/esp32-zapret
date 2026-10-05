@@ -1,0 +1,94 @@
+name: tests
+
+on:
+  workflow_call:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  unit:
+    name: unit tests (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run host unit tests
+        run: bash tests/host/run.sh
+
+  static:
+    name: static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gcc analyzer on platform-independent code
+        run: |
+          gcc -std=c17 -Wall -Wextra -Werror -fanalyzer -c \
+            -Itests/host/stub -Icomponents/esp_desync -Icomponents/esp_desync/include \
+            components/esp_desync/desync_tls.c -o /tmp/desync_tls.o
+          gcc -std=c17 -Wall -Wextra -Werror -fanalyzer -c \
+            -Imain main/net_utils.c -o /tmp/net_utils.o
+
+  hygiene:
+    name: repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Required files exist
+        run: |
+          for f in LICENSE README.md README.en.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md INSTALL_RU.md VERSION main/secrets_example.h; do
+            test -f "$f" || { echo "missing $f"; exit 1; }
+          done
+
+      - name: No secrets or build artifacts tracked
+        run: |
+          if git ls-files | grep -E '(^|/)(secrets\.h|sdkconfig|sdkconfig\.old)$|^build/|^dist/|^firmware/'; then
+            echo "forbidden files are tracked"; exit 1
+          fi
+
+      - name: No bot tokens in tracked files
+        run: |
+          if git grep -nE '[0-9]{8,10}:[A-Za-z0-9_-]{35}' -- . ':!main/secrets_example.h'; then
+            echo "possible Telegram token found"; exit 1
+          fi
+
+      - name: VERSION matches CHANGELOG
+        run: |
+          v="$(cat VERSION)"
+          grep -q "^## \[$v\]" CHANGELOG.md || { echo "CHANGELOG has no entry for $v"; exit 1; }
+
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            command: "idf.py build"
+          - name: disorder+md5sig
+            command: 'bash -c "echo CONFIG_ESP_DESYNC_MODE_DISORDER=y >> sdkconfig.defaults && echo CONFIG_ESP_DESYNC_FOOLING_MD5SIG=y >> sdkconfig.defaults && idf.py build"'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.6
+          target: esp32
+          path: '.'
+          command: ${{ matrix.command }}
+
+      - name: Upload firmware binaries
+        if: matrix.name == 'default'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-bins
+          path: |
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/esp32-zapret.bin
+          retention-days: 14

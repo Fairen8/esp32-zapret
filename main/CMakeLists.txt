@@ -2,6 +2,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "net_utils.c"
         "telegram.c"
         "wol.c"
     INCLUDE_DIRS

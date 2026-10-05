@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <string.h>
-#include "desync_internal.h"
+#include "desync_tls.h"
 #include "esp_random.h"
 
 static uint16_t rd16(const uint8_t *p)
