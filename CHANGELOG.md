@@ -4,6 +4,16 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Добавлено
+- CodeQL-анализ (C/C++, `build-mode: none`) — бесплатно для публичного репозитория.
+- OpenSSF Scorecard: оценка защищённости и публикация результатов в code scanning.
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), шаблоны issue (bug/feature)
+  и шаблон pull request.
+- Ограничение разрешённых GitHub Actions: только GitHub-owned и явно
+  перечисленные действия проекта (espressif, softprops, ossf).
+
 ## [0.2.1] - 2026-10-05
 
 ### Изменено
