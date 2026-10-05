@@ -17,52 +17,60 @@ jobs:
   tests:
     uses: ./.github/workflows/tests.yml
 
-  release:
-    name: publish release
-    needs: [ tests ]
-    if: github.event_name == 'push'
+  check:
+    name: check release
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Read version
+      - name: Check version and tag
         id: v
         run: |
           if [ ! -f VERSION ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "No VERSION file, nothing to release"
+            exit 0
+          fi
+          version="$(cat VERSION)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v$version already exists, skipping release"
           else
-            echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Will publish v$version after approval"
           fi
 
-      - name: Check if tag already exists
-        id: tag
-        if: steps.v.outputs.skip != 'true'
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag v${{ steps.v.outputs.version }} already exists, skipping release"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+  release:
+    name: publish release
+    needs: [ tests, check ]
+    if: github.event_name == 'push' && needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Download firmware
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         uses: actions/download-artifact@v8
         with:
           name: firmware-bins
           path: firmware
 
       - name: Install esptool
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         run: |
           python3 -m venv .esptool
           .esptool/bin/pip install --quiet esptool
 
       - name: Create merged image
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         run: |
           .esptool/bin/python -m esptool --chip esp32 merge-bin \
             -o firmware/esp32-zapret-merged.bin --flash-mode dio --flash-size 4MB \
@@ -71,14 +79,11 @@ jobs:
             0x10000 firmware/esp32-zapret.bin
 
       - name: Assemble release archive
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
-        env:
-          VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
           pkg="pkg/esp32-zapret"
           mkdir -p "$pkg/firmware"
-          for f in main components tests tools README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults .gitignore .gitattributes; do
+          for f in main components tests tools README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults .gitignore .gitattributes; do
             cp -r "$f" "$pkg/"
           done
           cp firmware/bootloader/bootloader.bin firmware/partition_table/partition-table.bin firmware/esp32-zapret.bin firmware/esp32-zapret-merged.bin "$pkg/firmware/"
@@ -113,9 +118,6 @@ jobs:
           (cd pkg && zip -r "../esp32-zapret-v${VERSION}.zip" esp32-zapret)
 
       - name: Extract release notes from CHANGELOG
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
-        env:
-          VERSION: ${{ steps.v.outputs.version }}
         run: |
           awk -v ver="$VERSION" 'BEGIN{f=0} /^## \[/{ if (f) exit; if (index($0, "[" ver "]")) f=1 } f' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
@@ -124,9 +126,6 @@ jobs:
           printf '\n---\nRelease firmware assets are built with placeholder credentials.\nBuild from source with your own secrets.h for real use (see INSTALL_RU.md).\n' >> notes.md
 
       - name: Create and push tag
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
-        env:
-          VERSION: ${{ steps.v.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -134,10 +133,8 @@ jobs:
           git push origin "v${VERSION}"
 
       - name: Publish GitHub release
-        if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.v.outputs.version }}
         run: |
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \

@@ -4,15 +4,31 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.2.2] - 2026-10-05
 
 ### Добавлено
-- CodeQL-анализ (C/C++, `build-mode: none`) — бесплатно для публичного репозитория.
-- OpenSSF Scorecard: оценка защищённости и публикация результатов в code scanning.
-- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), шаблоны issue (bug/feature)
-  и шаблон pull request.
-- Ограничение разрешённых GitHub Actions: только GitHub-owned и явно
-  перечисленные действия проекта (espressif, softprops, ossf).
+- Обязательное ревью перед релизом: protected environment `release` с
+  обязательным одобрением владельца (админ-обход отключён), environment
+  разрешён только из ветки `releases`. Паблиш-джоба ждёт Approve.
+- Ветка `community` для PR от сообщества (баги/идеи): обязательное одобрение
+  владельца, 5 проверок, прямые коммиты запрещены.
+- Автоназначение ревьюера: PR в `community`/`releases` от сторонних авторов
+  автоматически пингуют @Fairen8 и запрашивают его ревью.
+- CodeQL (C/C++, `build-mode: none`) и OpenSSF Scorecard с публикацией в
+  code scanning.
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), шаблоны issue (bug/feature),
+  бейджи CodeQL/Scorecard.
+- Ограничение разрешённых GitHub Actions: GitHub-owned + явно перечисленные
+  действия (espressif, softprops, ossf).
+
+### Изменено
+- Шаблон PR упрощён: ручные чекбоксы убраны (проверки делает CI).
+- Теги `v*` защищены от удаления и перезаписи (ruleset).
+- Scorecard: `ossf/scorecard-action` запинен на `v2.4.4` (тега `v2` не существует).
+- Требование «ветка не отстаёт» (strict) отключено для защищённых ветвей.
+
+### Исправлено
+- Scorecard падал из-за неразрешимого тега; CodeQL и Scorecard теперь зелёные.
 
 ## [0.2.1] - 2026-10-05
 
