@@ -48,3 +48,5 @@
    hygiene, build).
 3. После мержа GitHub Actions соберёт прошивку, создаст тег `vX.Y.Z` и
    опубликует релиз. Если тег уже существует — публикация пропускается.
+4. Сама публикация ждёт одобрения владельца: protected environment `release`
+   (Actions → Review deployments). Без Approve релиз не выходит.
