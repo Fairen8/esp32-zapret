@@ -1,0 +1,61 @@
+name: Bug report
+description: Сборка, прошивка, бот или обход DPI — что-то работает не так
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт! Пожалуйста, не прикладывайте реальные токены ботов,
+        пароли Wi-Fi и MAC-адреса. Юридическая информация — в DISCLAIMER.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Что произошло
+      description: Опишите проблему и ожидаемое поведение
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Версия и железо
+      placeholder: "esp32-zapret v0.2.1, ESP-IDF v5.3.6, ESP32-WROOM-32"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - build / CI
+        - Wi-Fi / сеть
+        - Telegram Bot API (409, IP, SNI)
+        - Wake-on-LAN
+        - desync (fake / split / disorder / tlsrec / fooling)
+        - другое
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи и /status
+      description: Вывод `idf.py monitor` (без секретов) и ответ бота на /status
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: provider
+    attributes:
+      label: Провайдер и регион
+      description: Если проблема связана с блокировками DPI
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Подтверждение
+      options:
+        - label: Я не приложил реальные секреты (токены/пароли/MAC)
+          required: true
+        - label: Я проверил существующие issue и разделы README
+          required: true

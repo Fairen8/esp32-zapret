@@ -3,6 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![tests](https://github.com/Fairen8/esp32-zapret/actions/workflows/tests.yml/badge.svg)](https://github.com/Fairen8/esp32-zapret/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/Fairen8/esp32-zapret?include_prereleases&label=release)](https://github.com/Fairen8/esp32-zapret/releases)
+[![CodeQL](https://github.com/Fairen8/esp32-zapret/actions/workflows/codeql.yml/badge.svg)](https://github.com/Fairen8/esp32-zapret/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Fairen8/esp32-zapret/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Fairen8/esp32-zapret)
 
 Мини-аналог [zapret](https://github.com/bol-van/zapret) для ESP32: обход
 SNI-блокировок DPI/ТСПУ **самим устройством**, без сторонних серверов и VPN.
