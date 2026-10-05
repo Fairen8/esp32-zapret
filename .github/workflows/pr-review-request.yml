@@ -1,0 +1,24 @@
+name: pr review request
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+    branches: [ community, releases ]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  request:
+    if: github.event.pull_request.user.login != 'Fairen8'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping maintainer and request review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/requested_reviewers" \
+            -f "reviewers[]=Fairen8" || true
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "Спасибо за PR! @Fairen8, глянь, пожалуйста. / Thanks for the PR! @Fairen8, please review."
