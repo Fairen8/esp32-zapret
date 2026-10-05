@@ -12,7 +12,7 @@ jobs:
     name: unit tests (host)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run host unit tests
         run: bash tests/host/run.sh
@@ -21,7 +21,7 @@ jobs:
     name: static analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: gcc analyzer on platform-independent code
         run: |
@@ -35,7 +35,7 @@ jobs:
     name: repo hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Required files exist
         run: |
@@ -72,7 +72,7 @@ jobs:
           - name: disorder+md5sig
             command: 'bash -c "echo CONFIG_ESP_DESYNC_MODE_DISORDER=y >> sdkconfig.defaults && echo CONFIG_ESP_DESYNC_FOOLING_MD5SIG=y >> sdkconfig.defaults && idf.py build"'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload firmware binaries
         if: matrix.name == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-bins
           path: |
