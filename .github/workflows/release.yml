@@ -50,7 +50,7 @@ jobs:
 
       - name: Download firmware
         if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: firmware-bins
           path: firmware
