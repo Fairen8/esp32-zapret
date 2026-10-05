@@ -95,8 +95,8 @@ idf.py build flash monitor
 ### Windows: кириллица в пути
 
 ESP-IDF (kconfgen) падает, если путь к проекту содержит не-ASCII символы
-(`C:\Users\Александр\...`). Если проект лежит в таком пути — используйте хелпер,
-он зеркалит проект в ASCII-каталог и собирает там:
+(`C:\Users\Иван\Documents\...`). Если проект лежит в таком пути — используйте
+хелпер, он зеркалит проект в ASCII-каталог и собирает там:
 
 ```
 powershell -ExecutionPolicy Bypass -File tools\win-build.ps1 -Action build
