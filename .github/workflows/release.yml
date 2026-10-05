@@ -64,10 +64,10 @@ jobs:
       - name: Create merged image
         if: steps.v.outputs.skip != 'true' && steps.tag.outputs.exists == 'false'
         run: |
-          .esptool/bin/python -m esptool --chip esp32 merge_bin \
-            -o firmware/esp32-zapret-merged.bin --flash_mode dio --flash_size 4MB \
-            0x1000 firmware/bootloader.bin \
-            0x8000 firmware/partition-table.bin \
+          .esptool/bin/python -m esptool --chip esp32 merge-bin \
+            -o firmware/esp32-zapret-merged.bin --flash-mode dio --flash-size 4MB \
+            0x1000 firmware/bootloader/bootloader.bin \
+            0x8000 firmware/partition_table/partition-table.bin \
             0x10000 firmware/esp32-zapret.bin
 
       - name: Assemble release archive
@@ -81,7 +81,7 @@ jobs:
           for f in main components tests tools README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults .gitignore .gitattributes; do
             cp -r "$f" "$pkg/"
           done
-          cp firmware/bootloader.bin firmware/partition-table.bin firmware/esp32-zapret.bin firmware/esp32-zapret-merged.bin "$pkg/firmware/"
+          cp firmware/bootloader/bootloader.bin firmware/partition_table/partition-table.bin firmware/esp32-zapret.bin firmware/esp32-zapret-merged.bin "$pkg/firmware/"
           {
             printf 'esp32-zapret firmware (v%s)\n' "$VERSION"
             printf 'Built by GitHub Actions from tag v%s.\n\n' "$VERSION"
