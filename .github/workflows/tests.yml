@@ -12,7 +12,7 @@ jobs:
     name: unit tests (host)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Run host unit tests
         run: bash tests/host/run.sh
@@ -21,7 +21,7 @@ jobs:
     name: static analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: gcc analyzer on platform-independent code
         run: |
@@ -35,7 +35,7 @@ jobs:
     name: repo hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Required files exist
         run: |
@@ -72,10 +72,10 @@ jobs:
           - name: disorder+md5sig
             command: 'bash -c "echo CONFIG_ESP_DESYNC_MODE_DISORDER=y >> sdkconfig.defaults && echo CONFIG_ESP_DESYNC_FOOLING_MD5SIG=y >> sdkconfig.defaults && idf.py build"'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Build with ESP-IDF
-        uses: espressif/esp-idf-ci-action@v1
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
         with:
           esp_idf_version: v5.3.6
           target: esp32
@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload firmware binaries
         if: matrix.name == 'default'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: firmware-bins
           path: |
