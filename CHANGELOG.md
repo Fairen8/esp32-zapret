@@ -4,6 +4,19 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.2.1] - 2026-10-05
+
+### Изменено
+- GitHub Actions обновлены через Dependabot: `actions/checkout` v7,
+  `actions/upload-artifact` v7, `actions/download-artifact` v8.
+- Репозиторий открыт публично и защищён: branch protection для `releases`
+  (5 обязательных проверок, изменения только через PR, force-push и удаление
+  запрещены), правила защиты тегов `v*`, secret scanning с push protection,
+  Dependabot alerts и private vulnerability reporting.
+
+### Добавлено
+- `SECURITY.md` и `.github/dependabot.yml`.
+
 ## [0.2.0] - 2026-10-05
 
 ### Добавлено
