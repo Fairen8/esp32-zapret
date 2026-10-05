@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: MIT
+menu "esp_desync anti-DPI"
+
+    choice ESP_DESYNC_DEFAULT_MODE
+        prompt "Default desync mode"
+        default ESP_DESYNC_MODE_FAKE_SPLIT
+        help
+            fake+split is the closest match to zapret's classic
+            "--dpi-desync=fake,split2" strategy.
+
+            OFF         - no modification (plain TLS)
+            SPLIT       - split ClientHello into TCP segments
+            DISORDER    - send tail of ClientHello first (raw), head via socket
+            FAKE        - send decoy ClientHello via raw IP with low TTL, then real
+            FAKE_SPLIT  - FAKE + SPLIT (recommended default)
+            TLSREC      - split ClientHello into two TLS records
+    config ESP_DESYNC_MODE_OFF
+        bool "OFF"
+    config ESP_DESYNC_MODE_SPLIT
+        bool "SPLIT"
+    config ESP_DESYNC_MODE_DISORDER
+        bool "DISORDER"
+    config ESP_DESYNC_MODE_FAKE
+        bool "FAKE"
+    config ESP_DESYNC_MODE_FAKE_SPLIT
+        bool "FAKE_SPLIT"
+    config ESP_DESYNC_MODE_TLSREC
+        bool "TLSREC"
+    endchoice
+
+    config ESP_DESYNC_FAKE_SNI
+        string "Decoy SNI for fake ClientHello"
+        default "www.iana.org"
+        help
+            TSPU must classify this domain as allowed. iana.org is
+            zapret's built-in default. If it ever gets blocked, change
+            to any popular non-blocked domain of your ISP.
+
+    config ESP_DESYNC_FAKE_TTL
+        int "TTL for injected fake packets"
+        range 1 255
+        default 3
+        help
+            The fake must reach the DPI/TSPU but die before the real
+            server. Tune it: find the minimal TTL at which the bypass
+            still works - that is the hop number of your DPI.
+
+    config ESP_DESYNC_FAKE_REPEATS
+        int "Fake packet repeats"
+        range 1 8
+        default 1
+
+    config ESP_DESYNC_OP_DELAY_MS
+        int "Delay between desync operations (ms)"
+        range 0 1000
+        default 20
+
+    config ESP_DESYNC_SPLIT_POS
+        int "Split position (-1 = auto, inside SNI)"
+        default -1
+
+    choice ESP_DESYNC_FOOLING
+        prompt "Fake packet fooling method"
+        default ESP_DESYNC_FOOLING_TTL
+        help
+            How the fake packet is prevented from reaching the server.
+
+            TTL    - packet dies on the way (most universal, needs tuning).
+            MD5SIG - TCP MD5 signature option; Linux servers silently drop it.
+            BADSUM - broken TCP checksum; home routers with conntrack
+                     checksum verification usually drop the packet too.
+            BADSEQ - sequence number pushed out of window.
+
+    config ESP_DESYNC_FOOLING_TTL
+        bool "TTL"
+    config ESP_DESYNC_FOOLING_MD5SIG
+        bool "MD5SIG"
+    config ESP_DESYNC_FOOLING_BADSUM
+        bool "BADSUM"
+    config ESP_DESYNC_FOOLING_BADSEQ
+        bool "BADSEQ"
+    endchoice
+
+    config ESP_DESYNC_BADSEQ_OFFSET
+        int "BADSEQ sequence offset"
+        default -10000
+
+endmenu

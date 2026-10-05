@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.6
+          target: esp32
+          path: '.'
+
+      - name: Prepare esptool
+        run: |
+          python3 -m venv .esptool
+          .esptool/bin/pip install --quiet esptool
+
+      - name: Create merged firmware image
+        run: |
+          .esptool/bin/python -m esptool --chip esp32 merge_bin \
+            -o esp32-zapret-merged.bin --flash_mode dio --flash_size 4MB \
+            0x1000 build/bootloader/bootloader.bin \
+            0x8000 build/partition_table/partition-table.bin \
+            0x10000 build/esp32-zapret.bin
+
+      - name: Pack firmware files
+        run: |
+          mkdir -p release
+          cp build/bootloader/bootloader.bin release/
+          cp build/partition_table/partition-table.bin release/
+          cp build/esp32-zapret.bin release/
+          cp esp32-zapret-merged.bin release/
+          cd release
+          zip -r ../esp32-zapret-firmware.zip .
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            esp32-zapret-merged.bin
+            esp32-zapret-firmware.zip
+          generate_release_notes: true

@@ -1,0 +1,13 @@
+build/
+dist/
+firmware/
+managed_components/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+*.log
+.vscode/
+
+# never commit real credentials
+main/secrets.h
