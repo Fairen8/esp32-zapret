@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload firmware binaries
         if: matrix.name == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-bins
           path: |
