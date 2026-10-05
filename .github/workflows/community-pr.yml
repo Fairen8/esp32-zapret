@@ -1,0 +1,36 @@
+name: community-pr
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+    branches: [community]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Приветствие и запрос ревью у владельца
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner, repo, pull_number: pr.number, reviewers: ['Fairen8'],
+              });
+            } catch (e) {}
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pr.number,
+              body: [
+                `Спасибо за PR, @${pr.user.login}!`,
+                '',
+                '@Fairen8 — требуется ревью.',
+                '',
+                'Правила: один логичный набор изменений на PR, сборка `idf.py build` должна проходить, никаких токенов/паролей/MAC в репозитории. Подробнее — `CONTRIBUTING.md`.',
+              ].join('\n'),
+            });
