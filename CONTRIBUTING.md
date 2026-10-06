@@ -2,6 +2,9 @@
 
 Спасибо за интерес к проекту!
 
+Перед началом посмотрите [docs/GOVERNANCE.md](docs/GOVERNANCE.md) (роли и
+процесс) и [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) (стиль кода).
+
 ## Ветки
 
 - `main` — основная разработка: изменения только через PR (6 зелёных

@@ -211,6 +211,25 @@ tools/win-build.ps1   сборка на Windows из пути с кирилли�
 - Выпуск версии: поднять `VERSION`, добавить секцию в `CHANGELOG.md`, открыть PR
   в `releases`, дождаться зелёных проверок и смержить.
 
+## Документация
+
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — быстрый старт (EN)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — архитектура и поток данных
+- [docs/SECURITY_DESIGN.md](docs/SECURITY_DESIGN.md) — модель угроз и защита
+- [docs/ASSURANCE_CASE.md](docs/ASSURANCE_CASE.md) — assurance case
+- [docs/GOVERNANCE.md](docs/GOVERNANCE.md) — управление, роли, континуитет
+- [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) — стандарты кода
+- [docs/MAINTENANCE.md](docs/MAINTENANCE.md) — релизы и поддержка
+- [docs/ROADMAP.md](docs/ROADMAP.md) — планы развития
+
+## Достижения
+
+- OpenSSF Best Practices: **baseline-1** и **passing** (проект 15251).
+- CodeQL (0 алертов), фаззинг TLS-парсера (libFuzzer + ASan/UBSan),
+  статанализ, secret scanning с push protection.
+- Релизы собираются в CI и публикуются с подписанным SLSA provenance.
+- OpenSSF Scorecard автоматически оценивает репозиторий.
+
 ## Безопасность и право
 
 Проект предназначен для использования на собственных устройствах и в собственных
