@@ -198,6 +198,25 @@ If TTL does not help, try `/fool md5sig`, then `fake` without split, then
 - To cut a version: bump `VERSION`, add a `CHANGELOG.md` section, open a PR to
   `releases`, wait for green checks and merge.
 
+## Documentation
+
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — quick start
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture and data flow
+- [docs/SECURITY_DESIGN.md](docs/SECURITY_DESIGN.md) — threat model and security design
+- [docs/ASSURANCE_CASE.md](docs/ASSURANCE_CASE.md) — assurance case
+- [docs/GOVERNANCE.md](docs/GOVERNANCE.md) — governance, roles, continuity
+- [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) — coding standards
+- [docs/MAINTENANCE.md](docs/MAINTENANCE.md) — releases and maintenance
+- [docs/ROADMAP.md](docs/ROADMAP.md) — roadmap
+
+## Achievements
+
+- OpenSSF Best Practices: **baseline-1** and **passing** badges (project 15251).
+- CodeQL (0 alerts), TLS parser fuzzing (libFuzzer + ASan/UBSan), static
+  analysis, secret scanning with push protection.
+- Releases are built in CI and published with signed SLSA provenance.
+- OpenSSF Scorecard evaluates the repository automatically.
+
 ## Security and legal
 
 The project is intended for personal use on your own devices and networks, and
