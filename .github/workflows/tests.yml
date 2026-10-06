@@ -75,7 +75,7 @@ jobs:
             -Itests/host/stub -Icomponents/esp_desync -Icomponents/esp_desync/include \
             -c fuzz/fuzz_tls.c -o fuzz_tls.o
           clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
-            -Icomponents/esp_desync \
+            -Itests/host/stub -Icomponents/esp_desync \
             -c components/esp_desync/desync_tls.c -o desync_tls.o
           clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
             -c tests/host/stub/esp_random.c -o esp_random.o
