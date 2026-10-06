@@ -4,6 +4,21 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.3.0] - 2026-10-06
+
+### Добавлено
+- Релизы для **ESP32-S3** и **ESP32-C3**: CI собирает все три цели, в релиз
+  публикуются отдельные merged-образы для каждой.
+- Вариант прошивки **без Telegram-бота** (`CONFIG_APP_ENABLE_TELEGRAM_BOT=n`):
+  периодический TLS self-test через `esp_desync` с логом по serial — удобно
+  проверять обход без токена бота.
+- В релизном архиве — каталог на каждую цель с индивидуальными бинарниками,
+  `flash.bat` и merged-образом.
+
+### Изменено
+- `sdkconfig.defaults` больше не фиксирует target — выбирается через
+  `idf.py set-target` или CI-матрицу.
+
 ## [0.2.5] - 2026-10-06
 
 ### Добавлено

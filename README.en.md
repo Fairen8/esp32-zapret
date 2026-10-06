@@ -43,7 +43,7 @@ ESP32 (WROOM-32) ── Wi-Fi ── router ── ISP/TSPU (DPI) ── api.tel
 
 | | |
 |---|---|
-| Chip | ESP32 (tested on ESP32-WROOM-32; the LwIP part is portable to S3/C3) |
+| Chip | ESP32 / ESP32-S3 / ESP32-C3 (CI builds all three; field-tested on ESP32-WROOM-32) |
 | ESP-IDF | ≥ 5.1 (CI builds with v5.3.6) |
 | Flash | 4 MB (`SINGLE_APP_LARGE`) |
 | Wi-Fi | 2.4 GHz, WPA2 |
@@ -108,10 +108,11 @@ idf.py build flash monitor
 ```
 
 Prebuilt images are available in
-[Releases](https://github.com/Fairen8/esp32-zapret/releases):
-`esp32-zapret-merged.bin` (flash at `0x0`) and an archive. Release binaries are
-built **with placeholder credentials** (no Wi-Fi/token) — build from source with
-your own `secrets.h` for real use.
+[Releases](https://github.com/Fairen8/esp32-zapret/releases): merged images for
+**esp32**, **esp32s3**, **esp32c3** and a **no-bot** variant (`esp32-nobot`,
+periodic TLS self-test through esp_desync), plus a source archive. Release
+binaries are built **with placeholder credentials** (no Wi-Fi/token) — build
+from source with your own `secrets.h` for real use.
 
 ### Windows: non-ASCII project paths
 

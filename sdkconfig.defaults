@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-CONFIG_IDF_TARGET="esp32"
+# Target is selected via "idf.py set-target" or the CI matrix (esp32/esp32s3/esp32c3).
 
 # Flash / partitions
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
