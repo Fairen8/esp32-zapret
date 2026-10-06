@@ -5,6 +5,8 @@
  "accessibility_best_practices_status": "N/A",
  "achieve_passing_justification": "Passing badge achieved 2026-10-06.",
  "achieve_passing_status": "Met",
+ "assurance_case_justification": "Security assurance case documented: https://github.com/Fairen8/esp32-zapret/blob/main/docs/ASSURANCE_CASE.md",
+ "assurance_case_status": "Met",
  "automated_integration_testing_justification": "GitHub Actions CI on every push/PR runs unit tests, static analysis, two ESP-IDF builds and fuzzing: https://github.com/Fairen8/esp32-zapret/actions",
  "automated_integration_testing_status": "Met",
  "build_common_tools_justification": "Uses CMake and the ESP-IDF build system.",
