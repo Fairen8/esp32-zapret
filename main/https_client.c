@@ -9,6 +9,7 @@
 #include "mbedtls/net_sockets.h"
 #include "esp_desync.h"
 #include "net_utils.h"
+#include "fw_version.h"
 #include "https_client.h"
 
 static const char *TAG = "https";
@@ -131,31 +132,11 @@ static int parse_http_status(const char *r)
     return atoi(sp + 1);
 }
 
-int https_request(https_conn_t *c, const char *path, const char *accept,
-                  char *resp, size_t resp_sz, int timeout_ms, int *http_status)
+static int ssl_write_all(mbedtls_ssl_context *ssl, const char *data, size_t len)
 {
-    if (http_status) {
-        *http_status = 0;
-    }
-    if (resp == NULL || resp_sz == 0) {
-        return -1;
-    }
-
-    char req[640];
-    int rl = snprintf(req, sizeof(req),
-                      "GET %s HTTP/1.1\r\n"
-                      "Host: %s\r\n"
-                      "User-Agent: esp32-zapret/1.0.0\r\n"
-                      "Accept: %s\r\n"
-                      "Connection: close\r\n\r\n",
-                      path, c->host, accept ? accept : "application/json");
-    if (rl <= 0 || rl >= (int)sizeof(req)) {
-        return -1;
-    }
-
     size_t off = 0;
-    while (off < (size_t)rl) {
-        int n = mbedtls_ssl_write(&c->ssl, (const unsigned char *)req + off, (size_t)rl - off);
+    while (off < len) {
+        int n = mbedtls_ssl_write(ssl, (const unsigned char *)data + off, len - off);
         if (n > 0) {
             off += (size_t)n;
         } else if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
@@ -165,7 +146,12 @@ int https_request(https_conn_t *c, const char *path, const char *accept,
             return -1;
         }
     }
+    return 0;
+}
 
+static int read_response(https_conn_t *c, char *resp, size_t resp_sz, int timeout_ms,
+                         int *http_status)
+{
     int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
     size_t pos = 0;
     while (pos + 1 < resp_sz) {
@@ -187,6 +173,66 @@ int https_request(https_conn_t *c, const char *path, const char *accept,
         *http_status = parse_http_status(resp);
     }
     return (int)pos;
+}
+
+int https_request(https_conn_t *c, const char *path, const char *accept,
+                  char *resp, size_t resp_sz, int timeout_ms, int *http_status)
+{
+    if (http_status) {
+        *http_status = 0;
+    }
+    if (resp == NULL || resp_sz == 0) {
+        return -1;
+    }
+
+    char req[640];
+    int rl = snprintf(req, sizeof(req),
+                      "GET %s HTTP/1.1\r\n"
+                      "Host: %s\r\n"
+                      "User-Agent: " FW_USER_AGENT "\r\n"
+                      "Accept: %s\r\n"
+                      "Connection: close\r\n\r\n",
+                      path, c->host, accept ? accept : "application/json");
+    if (rl <= 0 || rl >= (int)sizeof(req)) {
+        return -1;
+    }
+    if (ssl_write_all(&c->ssl, req, (size_t)rl) != 0) {
+        return -1;
+    }
+    return read_response(c, resp, resp_sz, timeout_ms, http_status);
+}
+
+int https_post_json(https_conn_t *c, const char *path, const char *json,
+                    int timeout_ms, int *http_status)
+{
+    if (http_status) {
+        *http_status = 0;
+    }
+    if (json == NULL) {
+        return -1;
+    }
+
+    size_t body_len = strlen(json);
+    char hdr[320];
+    int hl = snprintf(hdr, sizeof(hdr),
+                      "POST %s HTTP/1.1\r\n"
+                      "Host: %s\r\n"
+                      "User-Agent: " FW_USER_AGENT "\r\n"
+                      "Accept: application/json\r\n"
+                      "Content-Type: application/json\r\n"
+                      "Content-Length: %u\r\n"
+                      "Connection: close\r\n\r\n",
+                      path, c->host, (unsigned)body_len);
+    if (hl <= 0 || hl >= (int)sizeof(hdr)) {
+        return -1;
+    }
+    if (ssl_write_all(&c->ssl, hdr, (size_t)hl) != 0 ||
+        ssl_write_all(&c->ssl, json, body_len) != 0) {
+        return -1;
+    }
+
+    char discard[64];
+    return read_response(c, discard, sizeof(discard), timeout_ms, http_status);
 }
 
 void https_close(https_conn_t *c)

@@ -38,4 +38,8 @@ echo "== DoH parser tests =="
 "$CC" $CFLAGS -I"$ROOT/main" test_doh.c "$ROOT/main/doh_parse.c" -o "$OUT/doh_tests"
 "$OUT/doh_tests"
 
+echo "== stats payload tests =="
+"$CC" $CFLAGS -I"$ROOT/main" test_stats.c "$ROOT/main/stats_payload.c" -o "$OUT/stats_tests"
+"$OUT/stats_tests"
+
 echo "ALL HOST TESTS PASSED"

@@ -17,6 +17,8 @@ component.
 │    https_client.c  HTTPS/TLS client (mbedTLS + esp_desync)│
 │    telegram.c      Telegram Bot API over https_client     │
 │    doh.c           DNS-over-HTTPS fallback resolver       │
+│    stats.c         anonymous statistics (opt-in, silent)  │
+│    stats_payload.c pure JSON builder (unit-tested)        │
 │    net_utils.c     IP/MAC/URL helpers                     │
 │    wol.c           Wake-on-LAN magic packets              │
 │                                                           │
@@ -43,6 +45,8 @@ component.
    `APP_HEALTH_FAIL_THRESHOLD` consecutive failures the scan is re-run.
 5. If DNS resolution fails, `doh.c` resolves the Telegram addresses over
    HTTPS (Cloudflare / Google).
+6. If anonymous statistics are enabled (opt-in), a small report is POSTed to
+   statistics.fairen8.ru; failures are ignored (`stats.c`).
 
 ## Data flow (Telegram request)
 

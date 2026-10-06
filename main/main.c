@@ -18,6 +18,7 @@
 #include "esp_desync.h"
 #include "desync_scan.h"
 #include "app_config.h"
+#include "stats.h"
 #include "telegram.h"
 #include "wol.h"
 
@@ -173,6 +174,26 @@ static void handle_update(const tg_update_t *u)
                  (unsigned)st.scans, (unsigned)st.probes, (unsigned)st.probe_fails);
         tg_send_message(u->chat_id, reply);
 
+    } else if (strncmp(text, "/stats", 6) == 0) {
+        char arg[8] = {0};
+        if (sp && sp[1]) {
+            copy_token(sp + 1, arg, sizeof(arg));
+        }
+        if (arg[0] == 0) {
+            snprintf(reply, sizeof(reply), "anonymous statistics: %s",
+                     stats_anon_enabled() ? "on" : "off");
+        } else if (strcmp(arg, "on") == 0) {
+            stats_anon_set_enabled(true);
+            stats_anon_report("manual");
+            snprintf(reply, sizeof(reply), "anonymous statistics: on");
+        } else if (strcmp(arg, "off") == 0) {
+            stats_anon_set_enabled(false);
+            snprintf(reply, sizeof(reply), "anonymous statistics: off");
+        } else {
+            snprintf(reply, sizeof(reply), "usage: /stats on|off");
+        }
+        tg_send_message(u->chat_id, reply);
+
     } else if (strncmp(text, "/status", 7) == 0) {
         wifi_ap_record_t ap;
         esp_desync_config_t c;
@@ -199,7 +220,8 @@ static void handle_update(const tg_update_t *u)
                         "/ttl <n> - fake packet TTL (tune 3..8)\n"
                         "/fool <mode> - ttl|md5sig|badsum|badseq|none\n"
                         "/scan - re-run strategy auto-detection\n"
-                        "/strategy - show current strategy and stats");
+                        "/strategy - show current strategy and stats\n"
+                        "/stats on|off - anonymous statistics (optional)");
     }
 }
 #endif /* CONFIG_APP_ENABLE_TELEGRAM_BOT */
@@ -252,6 +274,9 @@ void app_main(void)
     }
 #endif
 
+    stats_anon_init();
+    stats_anon_report("boot");
+
 #if CONFIG_APP_ENABLE_TELEGRAM_BOT
     ESP_LOGI(TAG, "ready, starting telegram long-poll");
 
@@ -270,6 +295,8 @@ void app_main(void)
             scan_health_check();
             next_health = esp_timer_get_time() + (int64_t)CONFIG_APP_HEALTH_CHECK_INTERVAL_S * 1000000;
         }
+
+        stats_anon_tick();
 
         int r = tg_get_updates(&upd, offset, 25);
         if (r > 0) {
@@ -303,7 +330,9 @@ void app_main(void)
         if (tg_selftest() != 0) {
             scan_health_check();
         }
+        stats_anon_tick();
         vTaskDelay(pdMS_TO_TICKS(60000));
     }
 #endif
 }
+

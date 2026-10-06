@@ -114,6 +114,20 @@ Manual control: `/scan` re-runs the scan, `/strategy` shows the current strategy
 and probe statistics. Manual `/desync`, `/ttl`, `/fool` still work and take
 precedence until the next auto-scan.
 
+## Anonymous statistics (voluntary)
+
+Since v1.0.1 the firmware can send a small anonymous report to
+`statistics.fairen8.ru` so the author can see which strategies actually work at
+different providers. Sending is **disabled by default**.
+
+What is sent: firmware version, chip, uptime, RSSI, mode/fooling/TTL, split
+positions, the selected strategy and probe counters. No identifiers (device or
+chat IDs, SSIDs, IP addresses) are sent.
+
+Enable/disable with `/stats on` / `/stats off` (persisted in NVS) or
+`CONFIG_APP_STATS_DEFAULT_ON=y` at build time. A report is sent at boot and at
+most once a day; if the server is unavailable the attempt is silently skipped.
+
 ## Quick start
 
 ```bash
@@ -157,6 +171,7 @@ all paths can be overridden with `-IdfPath`, `-ToolsPath`, `-PythonDir`,
 /fool <mode>                ttl | md5sig | badsum | badseq | none
 /scan                       re-run strategy auto-detection
 /strategy                   current strategy and probe statistics
+/stats on|off               anonymous statistics (off by default)
 ```
 
 ### Tuning TTL

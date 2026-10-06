@@ -43,6 +43,10 @@ model, secure design principles and input handling.
 - **Minimal attack surface.** The firmware exposes no listening services; it is
   an outbound-only client. Bypass probes are outbound-only as well and use the
   same certificate-verified TLS stack as normal operation.
+- **Voluntary, anonymous telemetry.** Anonymous statistics are disabled by
+  default (opt-in via `/stats on` or `APP_STATS_DEFAULT_ON`) and carry no
+  identifiers (no device/chat IDs, no SSIDs, no IP addresses); reports use the
+  same verified TLS stack and are silently skipped when unavailable.
 
 ## Input validation
 
