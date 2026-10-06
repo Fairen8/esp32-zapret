@@ -63,6 +63,27 @@ jobs:
           v="$(cat VERSION)"
           grep -q "^## \[$v\]" CHANGELOG.md || { echo "CHANGELOG has no entry for $v"; exit 1; }
 
+  fuzz:
+    name: fuzz smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build fuzz target
+        run: |
+          clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
+            -Itests/host/stub -Icomponents/esp_desync -Icomponents/esp_desync/include \
+            -c fuzz/fuzz_tls.c -o fuzz_tls.o
+          clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
+            -Itests/host/stub -Icomponents/esp_desync \
+            -c components/esp_desync/desync_tls.c -o desync_tls.o
+          clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
+            -c tests/host/stub/esp_random.c -o esp_random.o
+          clang++ -fsanitize=fuzzer,address,undefined fuzz_tls.o desync_tls.o esp_random.o -o fuzz_tls
+
+      - name: Run fuzzer for 90 seconds
+        run: ./fuzz_tls -max_total_time=90 -print_final_stats=1
+
   build:
     name: build (${{ matrix.name }})
     runs-on: ubuntu-latest

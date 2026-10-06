@@ -4,6 +4,18 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.2.4] - 2026-10-06
+
+### Добавлено
+- Фаззинг TLS-парсера и генератора фейка: `fuzz/fuzz_tls.c` (libFuzzer,
+  ASan/UBSan) и job «fuzz smoke test» в CI (прогон 90 секунд на каждый PR).
+- Защита `main`: изменения только через PR с зелёными проверками и ревью;
+  владелец сохраняет обход правил (admin bypass).
+
+### Изменено
+- `SECURITY.md`: добавлены прямые ссылки на GitHub Security Advisories.
+- Обязательные проверки на защищённых ветках дополнены фаззингом (6 проверок).
+
 ## [0.2.3] - 2026-10-06
 
 ### Добавлено
