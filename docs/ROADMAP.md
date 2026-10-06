@@ -17,6 +17,8 @@ change based on field feedback (DPI behavior differs between providers/regions).
 
 - [x] Release builds for ESP32-S3 and ESP32-C3.
 - [x] No-bot firmware variant (periodic TLS self-test).
+- [x] Boot-time strategy auto-detection and periodic health monitoring.
+- [x] DoH (DNS-over-HTTPS) fallback resolver.
 - [ ] Field testing on ESP32-S3/C3 hardware.
 - [ ] `fake` with multiple decoy SNIs and `rndsni` (randomized SNI).
 - [ ] `seqovl` overlap mode (split with sequence overlap).
@@ -25,7 +27,6 @@ change based on field feedback (DPI behavior differs between providers/regions).
 
 ## Medium term
 
-- [ ] DoH / DNS anti-spoofing support.
 - [ ] Settings in NVS + configuration via bot commands instead of `secrets.h`.
 - [ ] Optional Web UI for provisioning.
 

@@ -26,6 +26,9 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s);
 /* TLS connectivity self-test (no bot token required): returns 0 on success. */
 int tg_selftest(void);
 
+/* Lightweight connect+TLS probe used by the strategy scanner. */
+int tg_probe(int timeout_ms);
+
 /* Returns: response length (>0) or -1 on error */
 int tg_send_message(int64_t chat_id, const char *text);
 

@@ -173,12 +173,20 @@ static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
         return send_all(fd, hello, len);
     }
 
+    /* Multisplit: when the user did not pin the second position, cut again in
+     * the middle of the SNI (zapret's split2 behaviour). */
+    int p2 = c->split_pos2;
+    if (p2 < 0 && have_sni && sni_len >= 4 &&
+        (c->mode == ESP_DESYNC_MODE_SPLIT || c->mode == ESP_DESYNC_MODE_FAKE_SPLIT)) {
+        p2 = (int)(sni_off + sni_len / 2);
+    }
+
     switch (c->mode) {
     case ESP_DESYNC_MODE_OFF:
         return send_all(fd, hello, len);
 
     case ESP_DESYNC_MODE_SPLIT:
-        return send_seg(fd, hello, len, p1, c->split_pos2, c->op_delay_ms);
+        return send_seg(fd, hello, len, p1, p2, c->op_delay_ms);
 
     case ESP_DESYNC_MODE_TLSREC:
         if (p1 <= 5) {
@@ -214,7 +222,7 @@ static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
         if (c->mode == ESP_DESYNC_MODE_FAKE) {
             return send_all(fd, hello, len);
         }
-        return send_seg(fd, hello, len, p1, c->split_pos2, c->op_delay_ms);
+        return send_seg(fd, hello, len, p1, p2, c->op_delay_ms);
     }
 
     case ESP_DESYNC_MODE_DISORDER: {

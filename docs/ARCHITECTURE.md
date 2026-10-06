@@ -11,10 +11,14 @@ component.
 ```
 ┌────────────────────────── ESP32 ──────────────────────────┐
 │  main/                                                    │
-│    main.c      Wi-Fi STA, SNTP, long-poll loop, commands  │
-│    telegram.c  minimal HTTPS client (mbedTLS + esp_desync)│
-│    net_utils.c IP/MAC/URL helpers                          │
-│    wol.c       Wake-on-LAN magic packets                   │
+│    main.c          Wi-Fi STA, SNTP, bot loop, commands    │
+│    desync_scan.c   strategy auto-scan + health monitoring │
+│    scan_candidates.c  candidate list (pure, unit-tested)  │
+│    https_client.c  HTTPS/TLS client (mbedTLS + esp_desync)│
+│    telegram.c      Telegram Bot API over https_client     │
+│    doh.c           DNS-over-HTTPS fallback resolver       │
+│    net_utils.c     IP/MAC/URL helpers                     │
+│    wol.c           Wake-on-LAN magic packets              │
 │                                                           │
 │  components/esp_desync/                                   │
 │    esp_desync.c   orchestration, connect/write/read       │
@@ -23,6 +27,22 @@ component.
 │    desync_inject.c raw TCP segment injection (ip4_output_if)│
 └───────────────────────────────────────────────────────────┘
 ```
+
+## Boot and health flow
+
+1. Wi-Fi connects; SNTP synchronizes the clock (needed for TLS certificate
+   dates).
+2. `desync_scan.c` loads the last working strategy from NVS and probes it.
+3. If it fails (or nothing is saved), the candidate list from
+   `scan_candidates.c` is probed in order (`off` → fake+split with ascending
+   TTL → alternative decoy SNIs → other fooling → split/disorder/tlsrec). The
+   first working strategy is stored in NVS. Probes are ordinary TLS requests
+   to api.telegram.org through `https_client.c`.
+4. The bot loop runs with the selected strategy. Every
+   `APP_HEALTH_CHECK_INTERVAL_S` the strategy is probed again; after
+   `APP_HEALTH_FAIL_THRESHOLD` consecutive failures the scan is re-run.
+5. If DNS resolution fails, `doh.c` resolves the Telegram addresses over
+   HTTPS (Cloudflare / Google).
 
 ## Data flow (Telegram request)
 

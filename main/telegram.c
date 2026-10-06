@@ -2,18 +2,17 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "sdkconfig.h"
 #include "esp_log.h"
-#include "esp_err.h"
 #include "esp_timer.h"
-#include "esp_crt_bundle.h"
-#include "mbedtls/ssl.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/net_sockets.h"
 #include "esp_desync.h"
-#include "telegram.h"
+#include "https_client.h"
 #include "net_utils.h"
+#include "telegram.h"
 #include "app_config.h"
+#if CONFIG_APP_DOH_FALLBACK
+#include "doh.h"
+#endif
 
 static const char *TAG = "telegram";
 
@@ -24,6 +23,10 @@ static const char *TAG = "telegram";
  * we must not waste tens of seconds on them. */
 #define TG_CONNECT_TIMEOUT_MS 2500
 
+/* Quick-probe connect timeout: the scanner checks many strategies, so each
+ * probe must fail fast when the pinned addresses are dead. */
+#define TG_PROBE_CONNECT_TIMEOUT_MS 1200
+
 /* Known api.telegram.org addresses; overridden/extended by CFG_TG_API_IPS.
  * Order matters: tried top to bottom, DNS is the last resort. */
 static const char TG_DEFAULT_IPS[] =
@@ -33,167 +36,50 @@ static char s_resp[RESP_MAX];
 static char s_last_endpoint[16];
 static int s_last_status;
 
-typedef struct {
-    int fd;
-    mbedtls_ssl_context ssl;
-    mbedtls_ssl_config conf;
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context drbg;
-} tg_tls_t;
-
-static int parse_ip_list(const char *list, uint32_t *out, int max_addrs)
+static int tg_connect(https_conn_t *c, int timeout_ms)
 {
-    return net_parse_ip_list(list, out, max_addrs);
-}
-
-static void set_last_endpoint(uint32_t ip_be)
-{
-    net_format_ip(ip_be, s_last_endpoint, sizeof(s_last_endpoint));
-}
-
-/* Tries CFG_TG_API_IPS (or the built-in list) first, then DNS. Each candidate
- * gets a short connect timeout; first success wins. */
-static int tg_tcp_connect(tg_tls_t *t)
-{
-    uint32_t addrs[16];
+    uint32_t ips[16];
     int n = 0;
 
     if (CFG_TG_API_IPS[0] != '\0') {
-        n = parse_ip_list(CFG_TG_API_IPS, addrs, 16);
+        n = net_parse_ip_list(CFG_TG_API_IPS, ips, 16);
     }
     if (n == 0) {
-        n = parse_ip_list(TG_DEFAULT_IPS, addrs, 16);
+        n = net_parse_ip_list(TG_DEFAULT_IPS, ips, 16);
     }
 
-    for (int i = 0; i < n; i++) {
-        t->fd = esp_desync_connect_ip(TG_HOST, addrs[i], 443, TG_CONNECT_TIMEOUT_MS);
-        if (t->fd >= 0) {
-            set_last_endpoint(addrs[i]);
-            return 0;
-        }
+    if (https_connect(c, TG_HOST, ips, n, 443, TG_CONNECT_TIMEOUT_MS, timeout_ms, true) == 0) {
+        strlcpy(s_last_endpoint, https_endpoint(c), sizeof(s_last_endpoint));
+        return 0;
     }
 
-    int rn = esp_desync_resolve(TG_HOST, addrs, 16);
-    for (int i = 0; i < rn; i++) {
-        t->fd = esp_desync_connect_ip(TG_HOST, addrs[i], 443, TG_CONNECT_TIMEOUT_MS);
-        if (t->fd >= 0) {
-            set_last_endpoint(addrs[i]);
-            return 0;
-        }
+#if CONFIG_APP_DOH_FALLBACK
+    uint32_t resolved[8];
+    int rn = doh_resolve(TG_HOST, resolved, 8);
+    if (rn > 0 &&
+        https_connect(c, TG_HOST, resolved, rn, 443, TG_CONNECT_TIMEOUT_MS, timeout_ms, true) == 0) {
+        strlcpy(s_last_endpoint, https_endpoint(c), sizeof(s_last_endpoint));
+        return 0;
     }
+#endif
 
-    ESP_LOGW(TAG, "all telegram endpoints failed (%d pinned, %d dns)", n, rn);
+    ESP_LOGW(TAG, "all telegram endpoints failed (%d pinned)", n);
+    strlcpy(s_last_endpoint, "-", sizeof(s_last_endpoint));
     return -1;
 }
 
-static void tls_close(tg_tls_t *t)
+static int tg_http_get(const char *path, char *resp, size_t resp_sz, int timeout_ms, int *status)
 {
-    if (t->fd >= 0) {
-        mbedtls_ssl_close_notify(&t->ssl);
-        esp_desync_close(t->fd);
-        t->fd = -1;
-    }
-    mbedtls_ssl_free(&t->ssl);
-    mbedtls_ssl_config_free(&t->conf);
-    mbedtls_ctr_drbg_free(&t->drbg);
-    mbedtls_entropy_free(&t->entropy);
-}
+    https_conn_t conn;
 
-static int bio_send(void *ctx, const unsigned char *buf, size_t len)
-{
-    tg_tls_t *t = (tg_tls_t *)ctx;
-    ssize_t n = esp_desync_write(t->fd, buf, len);
-    if (n < 0) {
-        return MBEDTLS_ERR_NET_SEND_FAILED;
+    if (tg_connect(&conn, timeout_ms) != 0) {
+        s_last_status = 0;
+        return -1;
     }
-    if (n == 0) {
-        return MBEDTLS_ERR_SSL_WANT_WRITE;
-    }
-    return (int)n;
-}
-
-static int bio_recv(void *ctx, unsigned char *buf, size_t len)
-{
-    tg_tls_t *t = (tg_tls_t *)ctx;
-    ssize_t n = esp_desync_read(t->fd, buf, len);
-    if (n == -2) {
-        return MBEDTLS_ERR_SSL_WANT_READ;
-    }
-    if (n < 0) {
-        return MBEDTLS_ERR_NET_RECV_FAILED;
-    }
-    if (n == 0) {
-        return MBEDTLS_ERR_NET_CONN_RESET;
-    }
-    return (int)n;
-}
-
-static int tls_open(tg_tls_t *t, int timeout_ms)
-{
-    memset(t, 0, sizeof(*t));
-    t->fd = -1;
-    mbedtls_ssl_init(&t->ssl);
-    mbedtls_ssl_config_init(&t->conf);
-    mbedtls_entropy_init(&t->entropy);
-    mbedtls_ctr_drbg_init(&t->drbg);
-
-    if (mbedtls_ctr_drbg_seed(&t->drbg, mbedtls_entropy_func, &t->entropy, NULL, 0) != 0) {
-        goto fail;
-    }
-    if (mbedtls_ssl_config_defaults(&t->conf, MBEDTLS_SSL_IS_CLIENT,
-                                    MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
-        goto fail;
-    }
-    mbedtls_ssl_conf_authmode(&t->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-    mbedtls_ssl_conf_rng(&t->conf, mbedtls_ctr_drbg_random, &t->drbg);
-    if (esp_crt_bundle_attach(&t->conf) != ESP_OK) {
-        goto fail;
-    }
-    if (mbedtls_ssl_setup(&t->ssl, &t->conf) != 0) {
-        goto fail;
-    }
-    if (mbedtls_ssl_set_hostname(&t->ssl, TG_HOST) != 0) {
-        goto fail;
-    }
-
-    if (tg_tcp_connect(t) != 0) {
-        goto fail;
-    }
-    mbedtls_ssl_set_bio(&t->ssl, t, bio_send, bio_recv, NULL);
-
-    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
-    while (1) {
-        int ret = mbedtls_ssl_handshake(&t->ssl);
-        if (ret == 0) {
-            break;
-        }
-        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            if (esp_timer_get_time() > deadline) {
-                ESP_LOGW(TAG, "handshake timeout via %s", s_last_endpoint);
-                goto fail;
-            }
-            continue;
-        }
-        ESP_LOGW(TAG, "handshake failed via %s: -0x%04x", s_last_endpoint, (unsigned)-ret);
-        goto fail;
-    }
-    return 0;
-
-fail:
-    tls_close(t);
-    return -1;
-}
-
-static int parse_http_status(const char *r)
-{
-    if (strncmp(r, "HTTP/", 5) != 0) {
-        return 0;
-    }
-    const char *sp = strchr(r, ' ');
-    if (sp == NULL) {
-        return 0;
-    }
-    return atoi(sp + 1);
+    int n = https_request(&conn, path, "application/json", resp, resp_sz, timeout_ms, status);
+    https_close(&conn);
+    s_last_status = status ? *status : 0;
+    return n;
 }
 
 static void log_api_error(int status)
@@ -218,67 +104,6 @@ static void log_api_error(int status)
     } else {
         ESP_LOGW(TAG, "HTTP %d via %s: %s", status, s_last_endpoint, desc);
     }
-}
-
-static int https_get(const char *path, char *resp, size_t resp_sz, int timeout_ms, int *status)
-{
-    *status = 0;
-    s_last_status = 0;
-
-    tg_tls_t t;
-    if (tls_open(&t, timeout_ms) != 0) {
-        return -1;
-    }
-
-    char req[640];
-    int rl = snprintf(req, sizeof(req),
-                      "GET %s HTTP/1.1\r\n"
-                      "Host: " TG_HOST "\r\n"
-                      "User-Agent: esp32-zapret/0.1.1\r\n"
-                      "Accept: application/json\r\n"
-                      "Connection: close\r\n\r\n",
-                      path);
-    if (rl <= 0 || rl >= (int)sizeof(req)) {
-        tls_close(&t);
-        return -1;
-    }
-
-    size_t off = 0;
-    while (off < (size_t)rl) {
-        int n = mbedtls_ssl_write(&t.ssl, (const unsigned char *)req + off, (size_t)rl - off);
-        if (n > 0) {
-            off += (size_t)n;
-        } else if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            continue;
-        } else {
-            ESP_LOGW(TAG, "write failed: -0x%04x", (unsigned)-n);
-            tls_close(&t);
-            return -1;
-        }
-    }
-
-    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
-    size_t pos = 0;
-    while (pos + 1 < resp_sz) {
-        int n = mbedtls_ssl_read(&t.ssl, (unsigned char *)resp + pos, resp_sz - 1 - pos);
-        if (n > 0) {
-            pos += (size_t)n;
-            continue;
-        }
-        if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            if (esp_timer_get_time() > deadline) {
-                break;
-            }
-            continue;
-        }
-        break;
-    }
-    resp[pos] = 0;
-    tls_close(&t);
-
-    *status = parse_http_status(resp);
-    s_last_status = *status;
-    return (int)pos;
 }
 
 static size_t utf8_put(char *dst, size_t cap, uint32_t cp)
@@ -382,7 +207,7 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
              CFG_TG_TOKEN, long_poll_s, (long long)offset);
 
     int status = 0;
-    int n = https_get(path, s_resp, sizeof(s_resp), long_poll_s * 1000 + 20000, &status);
+    int n = tg_http_get(path, s_resp, sizeof(s_resp), long_poll_s * 1000 + 20000, &status);
     if (n <= 0) {
         return TG_RC_TRANSPORT;
     }
@@ -413,11 +238,6 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
     return TG_RC_UPDATE;
 }
 
-static void url_encode(const char *s, char *out, size_t out_sz)
-{
-    net_url_encode(s, out, out_sz);
-}
-
 int tg_send_message(int64_t chat_id, const char *text)
 {
     static char resp[2048];
@@ -425,16 +245,58 @@ int tg_send_message(int64_t chat_id, const char *text)
     char path[1536];
     int status = 0;
 
-    url_encode(text, enc, sizeof(enc));
+    net_url_encode(text, enc, sizeof(enc));
     snprintf(path, sizeof(path),
              "/bot%s/sendMessage?chat_id=%lld&text=%s",
              CFG_TG_TOKEN, (long long)chat_id, enc);
 
-    int n = https_get(path, resp, sizeof(resp), 20000, &status);
+    int n = tg_http_get(path, resp, sizeof(resp), 20000, &status);
     if (n > 0 && status != 200) {
         ESP_LOGW(TAG, "sendMessage HTTP %d", status);
     }
     return n;
+}
+
+int tg_probe(int timeout_ms)
+{
+    static char resp[256];
+    uint32_t ips[4];
+    int n = 0;
+
+    if (CFG_TG_API_IPS[0] != '\0') {
+        n = net_parse_ip_list(CFG_TG_API_IPS, ips, 4);
+    }
+    if (n == 0) {
+        n = net_parse_ip_list(TG_DEFAULT_IPS, ips, 4);
+    }
+
+    https_conn_t conn;
+    if (https_connect(&conn, TG_HOST, ips, n, 443, TG_PROBE_CONNECT_TIMEOUT_MS,
+                      timeout_ms, false) != 0) {
+        /* Pinned list is stale: fall back to the full path (DNS/DoH). */
+        if (tg_connect(&conn, timeout_ms) != 0) {
+            return -1;
+        }
+    }
+
+    int status = 0;
+    int r = https_request(&conn, "/", "application/json", resp, sizeof(resp), timeout_ms, &status);
+    strlcpy(s_last_endpoint, https_endpoint(&conn), sizeof(s_last_endpoint));
+    https_close(&conn);
+    return (r > 0) ? 0 : -1;
+}
+
+int tg_selftest(void)
+{
+    int64_t start = esp_timer_get_time();
+    int rc = tg_probe(20000);
+    int64_t ms = (esp_timer_get_time() - start) / 1000;
+    if (rc == 0) {
+        ESP_LOGI(TAG, "selftest ok: %lld ms, endpoint %s", (long long)ms, s_last_endpoint);
+    } else {
+        ESP_LOGW(TAG, "selftest failed (endpoint %s)", s_last_endpoint);
+    }
+    return rc;
 }
 
 const char *tg_last_endpoint(void)
@@ -445,22 +307,4 @@ const char *tg_last_endpoint(void)
 int tg_last_http_status(void)
 {
     return s_last_status;
-}
-
-int tg_selftest(void)
-{
-    static char resp[1024];
-    int status = 0;
-
-    int64_t start = esp_timer_get_time();
-    int n = https_get("/", resp, sizeof(resp), 20000, &status);
-    int64_t ms = (esp_timer_get_time() - start) / 1000;
-
-    if (n > 0) {
-        ESP_LOGI(TAG, "selftest ok: http=%d, %d bytes, %lld ms, endpoint %s",
-                 status, n, (long long)ms, tg_last_endpoint());
-        return 0;
-    }
-    ESP_LOGW(TAG, "selftest failed (endpoint %s)", tg_last_endpoint());
-    return -1;
 }

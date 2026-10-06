@@ -85,7 +85,7 @@ with full control over seq/ack/TTL/checksum.
 | Mode | zapret analogue | What it does |
 |---|---|---|
 | `off` | — | no modification |
-| `split` | `multisplit` | splits the ClientHello into TCP segments (inside the SNI by default) with a delay |
+| `split` | `multisplit` | splits the ClientHello into TCP segments (at the start and middle of the SNI by default) with a delay |
 | `disorder` | `multidisorder` | the tail of the ClientHello is sent raw **before** the head (it is then re-sent through the socket to keep LwIP sequencing consistent) |
 | `fake` | `fake` | injects a decoy ClientHello with the original seq |
 | `fake_split` | `fake,split2` | **default**: fake + split of the real hello |
@@ -95,6 +95,24 @@ Fake fooling methods: `TTL` (default), `MD5SIG` (Linux servers silently drop a
 packet with the TCP MD5 option), `BADSUM` (does not pass home NATs with conntrack
 checksum validation), `BADSEQ` (pushes seq out of the window). Defaults live in
 Kconfig; runtime switch via `/fool`.
+
+## Auto-tuning and health monitoring
+
+Since v4.0.0 the device **detects the optimal operating parameters itself**:
+
+- at boot it walks strategies from simple to complex (`off` → `fake_split` with
+  TTL 3/5/8/12 → alternative decoy SNIs → `md5sig`/`badseq`/`datanoack` →
+  `split`/`disorder`/`tlsrec`), probing each with a real TLS connection to
+  api.telegram.org; the first working one is stored in NVS and probed first on
+  subsequent boots;
+- every 10 minutes it verifies that the bypass still works; after 2 consecutive
+  failures it re-runs the scan (providers change their filtering);
+- if DNS is poisoned, Telegram addresses are resolved over **DoH**
+  (Cloudflare/Google).
+
+Manual control: `/scan` re-runs the scan, `/strategy` shows the current strategy
+and probe statistics. Manual `/desync`, `/ttl`, `/fool` still work and take
+precedence until the next auto-scan.
 
 ## Quick start
 
@@ -137,6 +155,8 @@ all paths can be overridden with `-IdfPath`, `-ToolsPath`, `-PythonDir`,
 /desync <mode>              off | split | disorder | fake | fake_split | tlsrec
 /ttl <1..255>               fake packet TTL
 /fool <mode>                ttl | md5sig | badsum | badseq | none
+/scan                       re-run strategy auto-detection
+/strategy                   current strategy and probe statistics
 ```
 
 ### Tuning TTL
