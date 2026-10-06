@@ -4,6 +4,30 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.0.0] - 2026-10-06
+
+### Добавлено
+- **Авто-подбор параметров при загрузке**: устройство перебирает стратегии
+  (`off` → `fake_split` с TTL 3/5/8/12 → альтернативные decoy-SNI →
+  `md5sig`/`badseq`/`datanoack` → `split`/`disorder`/`tlsrec`), проверяет
+  каждую реальным TLS-коннектом к api.telegram.org и сохраняет первую
+  рабочую в NVS (при следующих загрузках она проверяется первой).
+- **Периодический мониторинг обхода**: health-проба каждые 10 минут;
+  после 2 неудач подряд — автоматический перебор стратегий заново.
+- **DoH-fallback**: если DNS отравлен или заблокирован, адреса Telegram
+  резолвятся через DNS-over-HTTPS (Cloudflare 1.1.1.1 / Google 8.8.8.8).
+- Команды: `/scan` (повторный автоподбор), `/strategy` (стратегия и
+  статистика проб); `/status` показывает текущую стратегию.
+- Общий HTTPS-клиент (`https_client.c`) для бота, сканера и DoH.
+- Хостовые тесты: построитель кандидатов сканера и парсер DoH-JSON.
+
+### Изменено
+- `split`/`fake_split` по умолчанию режут ClientHello в двух местах: в начале
+  и в середине SNI (zapret `split2`/`multisplit`).
+- Kconfig: `APP_SCAN_ON_BOOT`, `APP_HEALTH_CHECK_INTERVAL_S`,
+  `APP_HEALTH_FAIL_THRESHOLD`, `APP_DOH_FALLBACK` (включены по умолчанию).
+- Сборка «без бота» также проходит авто-подбор и health-проверки.
+
 ## [0.3.0] - 2026-10-06
 
 ### Добавлено

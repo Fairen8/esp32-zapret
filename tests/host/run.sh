@@ -26,4 +26,16 @@ echo "== net utils tests =="
 "$CC" $CFLAGS -I"$ROOT/main" test_net.c "$ROOT/main/net_utils.c" -o "$OUT/net_tests"
 "$OUT/net_tests"
 
+echo "== scanner candidate tests =="
+"$CC" $CFLAGS \
+    -Istub \
+    -I"$ROOT/components/esp_desync/include" \
+    -I"$ROOT/main" \
+    test_scan.c "$ROOT/main/scan_candidates.c" -o "$OUT/scan_tests"
+"$OUT/scan_tests"
+
+echo "== DoH parser tests =="
+"$CC" $CFLAGS -I"$ROOT/main" test_doh.c "$ROOT/main/doh_parse.c" -o "$OUT/doh_tests"
+"$OUT/doh_tests"
+
 echo "ALL HOST TESTS PASSED"

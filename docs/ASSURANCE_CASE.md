@@ -64,6 +64,14 @@ traceable artifacts.
   Advisories), the maintainer contact, and expected response times.
 - Fixes are shipped through the automated release pipeline.
 
+### C8. Adaptive probing is safe
+
+- All strategy probes are outbound TLS connections to api.telegram.org using
+  the same verified stack (CA bundle + hostname verification) as normal
+  operation; no inbound port is opened.
+- Probe cadence is bounded (boot-time scan plus one probe per
+  `APP_HEALTH_CHECK_INTERVAL_S`), and the selected strategy is cached in NVS.
+
 ## Verification
 
 All evidence is reproducible from the public repository:

@@ -2,7 +2,12 @@
 idf_component_register(
     SRCS
         "main.c"
+        "desync_scan.c"
+        "doh.c"
+        "doh_parse.c"
+        "https_client.c"
         "net_utils.c"
+        "scan_candidates.c"
         "telegram.c"
         "wol.c"
     INCLUDE_DIRS
