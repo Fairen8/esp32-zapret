@@ -6,12 +6,15 @@ on:
     branches: [ community, releases ]
 
 permissions:
-  pull-requests: write
+  contents: read
 
 jobs:
   request:
     if: github.event.pull_request.user.login != 'Fairen8'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Ping maintainer and request review
         env:

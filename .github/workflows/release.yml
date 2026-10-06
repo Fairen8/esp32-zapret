@@ -7,7 +7,7 @@ on:
     branches: [ releases ]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   tests:
+    permissions:
+      contents: read
     uses: ./.github/workflows/tests.yml
 
   check:
@@ -52,6 +54,8 @@ jobs:
     if: github.event_name == 'push' && needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
@@ -68,7 +72,7 @@ jobs:
       - name: Install esptool
         run: |
           python3 -m venv .esptool
-          .esptool/bin/pip install --quiet esptool
+          .esptool/bin/pip install --quiet esptool==5.4.0
 
       - name: Create merged image
         run: |
