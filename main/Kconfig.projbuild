@@ -34,4 +34,26 @@ menu "esp32-zapret application"
         bool "DNS-over-HTTPS fallback resolver (Cloudflare/Google)"
         default y
 
+    config APP_STATS_DEFAULT_ON
+        bool "Anonymous statistics enabled by default (voluntary)"
+        default n
+        help
+            Sends a small anonymous report (firmware version, chip, uptime,
+            heap, RSSI, selected bypass strategy and its counters) to
+            statistics.fairen8.ru.
+
+            No identifiers are sent: no device or chat IDs, no SSIDs, no IP
+            addresses. Disabled by default; can be toggled at runtime with the
+            /stats bot command. Reports are best-effort and failures are never
+            reported to the user.
+
+    config APP_STATS_INTERVAL_S
+        int "Anonymous statistics interval (seconds)"
+        default 86400
+        range 3600 604800
+
+    config APP_STATS_HOST
+        string "Anonymous statistics endpoint"
+        default "statistics.fairen8.ru"
+
 endmenu
