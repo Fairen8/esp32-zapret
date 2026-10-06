@@ -94,4 +94,5 @@ jobs:
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
             build/esp32-zapret.bin
+            build/flash_args
           retention-days: 14

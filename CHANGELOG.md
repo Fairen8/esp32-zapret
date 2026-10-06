@@ -4,6 +4,21 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.2.3] - 2026-10-06
+
+### Добавлено
+- SLSA provenance для релизных артефактов (`actions/attest-build-provenance`):
+  к релизу прикладывается `*.intoto.jsonl` с подписанным происхождением сборки.
+- Ручной запуск CodeQL и Scorecard (`workflow_dispatch`).
+
+### Изменено
+- Сборка merged-образа в CI больше не использует pip/esptool: свой скрипт на
+  чистом Python (побайтово идентичен `esptool merge_bin` — проверено), внешних
+  зависимостей в CI нет.
+- Права токена: на верхнем уровне только `read`, `write` — точечно на джобах
+  (publish, attest, upload-sarif, PR-комментарий).
+- CodeQL запускается на пушах во все ветки (раньше только `main`).
+
 ## [0.2.2] - 2026-10-05
 
 ### Добавлено

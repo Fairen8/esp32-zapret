@@ -2,11 +2,12 @@ name: codeql
 
 on:
   push:
-    branches: [ main ]
+    branches: [ '**' ]
   pull_request:
     branches: [ main, community, releases ]
   schedule:
     - cron: '27 3 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
