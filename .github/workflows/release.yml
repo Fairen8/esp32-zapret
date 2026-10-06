@@ -7,7 +7,7 @@ on:
     branches: [ releases ]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   tests:
+    permissions:
+      contents: read
     uses: ./.github/workflows/tests.yml
 
   check:
@@ -52,6 +54,10 @@ jobs:
     if: github.event_name == 'push' && needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
@@ -65,18 +71,25 @@ jobs:
           name: firmware-bins
           path: firmware
 
-      - name: Install esptool
-        run: |
-          python3 -m venv .esptool
-          .esptool/bin/pip install --quiet esptool
-
       - name: Create merged image
         run: |
-          .esptool/bin/python -m esptool --chip esp32 merge-bin \
-            -o firmware/esp32-zapret-merged.bin --flash-mode dio --flash-size 4MB \
-            0x1000 firmware/bootloader/bootloader.bin \
-            0x8000 firmware/partition_table/partition-table.bin \
-            0x10000 firmware/esp32-zapret.bin
+          python3 - <<'PY'
+          from pathlib import Path
+          entries = []
+          for line in Path("firmware/flash_args").read_text().splitlines():
+              parts = line.split()
+              if len(parts) == 2 and parts[0].startswith("0x"):
+                  entries.append((int(parts[0], 16), Path("firmware") / parts[1]))
+          entries.sort()
+          out = bytearray()
+          for off, path in entries:
+              if len(out) > off:
+                  raise SystemExit(f"overlapping segments at {off:#x}")
+              out += b"\xff" * (off - len(out))
+              out += path.read_bytes()
+          Path("firmware/esp32-zapret-merged.bin").write_bytes(out)
+          print(f"merged {len(out)} bytes from {len(entries)} segments")
+          PY
 
       - name: Assemble release archive
         run: |
@@ -117,6 +130,14 @@ jobs:
           } > "$pkg/firmware/flash.bat"
           (cd pkg && zip -r "../esp32-zapret-v${VERSION}.zip" esp32-zapret)
 
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            firmware/esp32-zapret-merged.bin
+            esp32-zapret-v${{ env.VERSION }}.zip
+
       - name: Extract release notes from CHANGELOG
         run: |
           awk -v ver="$VERSION" 'BEGIN{f=0} /^## \[/{ if (f) exit; if (index($0, "[" ver "]")) f=1 } f' CHANGELOG.md > notes.md
@@ -135,9 +156,12 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
+          cp "$BUNDLE" "esp32-zapret-v${VERSION}.intoto.jsonl"
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --notes-file notes.md \
             "firmware/esp32-zapret-merged.bin" \
-            "esp32-zapret-v${VERSION}.zip"
+            "esp32-zapret-v${VERSION}.zip" \
+            "esp32-zapret-v${VERSION}.intoto.jsonl"
