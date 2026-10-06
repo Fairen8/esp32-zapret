@@ -98,7 +98,7 @@ Kconfig; runtime switch via `/fool`.
 
 ## Auto-tuning and health monitoring
 
-Since v4.0.0 the device **detects the optimal operating parameters itself**:
+Since v1.0.0 the device **detects the optimal operating parameters itself**:
 
 - at boot it walks strategies from simple to complex (`off` → `fake_split` with
   TTL 3/5/8/12 → alternative decoy SNIs → `md5sig`/`badseq`/`datanoack` →

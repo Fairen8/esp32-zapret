@@ -145,7 +145,7 @@ int https_request(https_conn_t *c, const char *path, const char *accept,
     int rl = snprintf(req, sizeof(req),
                       "GET %s HTTP/1.1\r\n"
                       "Host: %s\r\n"
-                      "User-Agent: esp32-zapret/4.0.0\r\n"
+                      "User-Agent: esp32-zapret/1.0.0\r\n"
                       "Accept: %s\r\n"
                       "Connection: close\r\n\r\n",
                       path, c->host, accept ? accept : "application/json");
