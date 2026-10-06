@@ -1,0 +1,21 @@
+version: "0.2.5"
+description: "Anti-DPI TLS ClientHello desync for ESP32: zapret-style fake/split/disorder/tlsrec with TTL/MD5SIG/BADSUM/BADSEQ fooling on top of LwIP."
+url: "https://github.com/Fairen8/esp32-zapret"
+repository: "https://github.com/Fairen8/esp32-zapret.git"
+documentation: "https://github.com/Fairen8/esp32-zapret#readme"
+issues: "https://github.com/Fairen8/esp32-zapret/issues"
+license: "MIT"
+maintainers:
+  - "Fairen8"
+tags:
+  - anti-dpi
+  - dpi
+  - tls
+  - clienthello
+  - sni
+  - lwip
+  - telegram
+  - zapret
+  - censorship-circumvention
+dependencies:
+  idf: ">=5.1"

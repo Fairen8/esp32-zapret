@@ -44,7 +44,9 @@
 
 Релизы собираются автоматически:
 
-1. Подними `VERSION` (semver) и добавь секцию для этой версии в `CHANGELOG.md`.
+1. Подними `VERSION` (semver), `version` в
+   `components/esp_desync/idf_component.yml` и добавь секцию для этой версии
+   в `CHANGELOG.md`.
 2. Открой PR из `main` в `releases` — запустятся все проверки (unit, static,
    hygiene, build).
 3. После мержа GitHub Actions соберёт прошивку, создаст тег `vX.Y.Z` и
