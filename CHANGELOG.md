@@ -4,6 +4,13 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.2.5] - 2026-10-06
+
+### Добавлено
+- Манифест компонента `components/esp_desync/idf_component.yml` — готов к
+  подключению и публикации в ESP Component Registry.
+- Раздел «Совместимость» в README (чип, ESP-IDF, flash, Wi-Fi, TLS).
+
 ## [0.2.4] - 2026-10-06
 
 ### Добавлено

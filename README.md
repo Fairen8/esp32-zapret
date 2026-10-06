@@ -36,6 +36,20 @@ ESP32 (WROOM-32) ── Wi-Fi ── роутер ── ISP/TSPU (DPI) ── a
 - Минимальный HTTPS-клиент Bot API на чистом mbedTLS поверх кастомного BIO.
 - Открытый исходный код, лицензия MIT.
 
+## Совместимость
+
+| | |
+|---|---|
+| Чип | ESP32 (тестировано на ESP32-WROOM-32; LwIP-часть переносима на S3/C3) |
+| ESP-IDF | ≥ 5.1 (CI собирает на v5.3.6) |
+| Flash | 4 МБ (`SINGLE_APP_LARGE`) |
+| Wi-Fi | 2.4 ГГц, WPA2 |
+| Сеть | только IPv4, TLS через mbedTLS |
+
+Компонент `esp_desync` содержит манифест `idf_component.yml` — его можно
+подключить как обычный компонент ESP-IDF или опубликовать в
+[ESP Component Registry](https://components.espressif.com).
+
 ## Как это работает
 
 Обычный способ применения zapret на Linux — прозрачный прокси/nfqueue. На ESP32 мы

@@ -37,6 +37,20 @@ ESP32 (WROOM-32) ── Wi-Fi ── router ── ISP/TSPU (DPI) ── api.tel
 - Minimal Bot API HTTPS client built on raw mbedTLS with a custom BIO.
 - Open source, MIT.
 
+## Compatibility
+
+| | |
+|---|---|
+| Chip | ESP32 (tested on ESP32-WROOM-32; the LwIP part is portable to S3/C3) |
+| ESP-IDF | ≥ 5.1 (CI builds with v5.3.6) |
+| Flash | 4 MB (`SINGLE_APP_LARGE`) |
+| Wi-Fi | 2.4 GHz, WPA2 |
+| Network | IPv4 only, TLS via mbedTLS |
+
+The `esp_desync` component ships with an `idf_component.yml` manifest, so it can
+be consumed as a regular ESP-IDF component or published to the
+[ESP Component Registry](https://components.espressif.com).
+
 ## How it works
 
 On Linux, zapret is usually applied as a transparent proxy or via nfqueue. On
