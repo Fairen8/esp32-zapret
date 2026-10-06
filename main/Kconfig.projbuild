@@ -1,0 +1,15 @@
+menu "esp32-zapret application"
+
+    config APP_ENABLE_TELEGRAM_BOT
+        bool "Telegram bot (commands and Wake-on-LAN)"
+        default y
+        help
+            Enable the Telegram bot: long polling, commands (/wake, /status,
+            /desync, /ttl, /fool) and Wake-on-LAN.
+
+            Disable to build the "no bot" variant: the device performs a
+            periodic TLS self-test through esp_desync to api.telegram.org and
+            logs the result over serial. Useful for verifying the bypass on a
+            network without configuring a bot token.
+
+endmenu

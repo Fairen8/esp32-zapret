@@ -48,11 +48,37 @@ Message the bot:
 /fool <mode>                ttl | md5sig | badsum | badseq | none
 ```
 
+## Build variants
+
+CI and releases build four firmware variants:
+
+| Variant | Target | Notes |
+|---|---|---|
+| `default` | esp32 | Telegram bot |
+| `esp32s3` | esp32s3 | Telegram bot |
+| `esp32c3` | esp32c3 | Telegram bot |
+| `nobot` | esp32 | no Telegram bot: periodic TLS self-test through esp_desync |
+
+Build for another chip:
+
+```bash
+idf.py set-target esp32s3   # or esp32c3
+idf.py build
+```
+
+Disable the bot (self-test firmware):
+
+```bash
+idf.py menuconfig   # esp32-zapret application -> Telegram bot (disable)
+```
+
 ## 5. Prebuilt firmware
 
-Release archives contain a merged image (`esp32-zapret-merged.bin`, flash at
-`0x0`) and individual binaries. Prebuilt images use **placeholder
-credentials** — build from source with your own `secrets.h` for real use.
+Release archives contain per-target directories (`esp32/`, `esp32s3/`,
+`esp32c3/`, `esp32-nobot/`) with individual binaries, a `flash.bat` and a merged
+image (`esp32-zapret-merged.bin`, flash at `0x0`). Prebuilt images use
+**placeholder credentials** — build from source with your own `secrets.h` for
+real use.
 
 ## Troubleshooting
 

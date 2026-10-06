@@ -446,3 +446,21 @@ int tg_last_http_status(void)
 {
     return s_last_status;
 }
+
+int tg_selftest(void)
+{
+    static char resp[1024];
+    int status = 0;
+
+    int64_t start = esp_timer_get_time();
+    int n = https_get("/", resp, sizeof(resp), 20000, &status);
+    int64_t ms = (esp_timer_get_time() - start) / 1000;
+
+    if (n > 0) {
+        ESP_LOGI(TAG, "selftest ok: http=%d, %d bytes, %lld ms, endpoint %s",
+                 status, n, (long long)ms, tg_last_endpoint());
+        return 0;
+    }
+    ESP_LOGW(TAG, "selftest failed (endpoint %s)", tg_last_endpoint());
+    return -1;
+}
