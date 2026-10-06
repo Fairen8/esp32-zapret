@@ -15,6 +15,9 @@ change based on field feedback (DPI behavior differs between providers/regions).
 
 ## Near term
 
+- [x] Release builds for ESP32-S3 and ESP32-C3.
+- [x] No-bot firmware variant (periodic TLS self-test).
+- [ ] Field testing on ESP32-S3/C3 hardware.
 - [ ] `fake` with multiple decoy SNIs and `rndsni` (randomized SNI).
 - [ ] `seqovl` overlap mode (split with sequence overlap).
 - [ ] `ts` fooling (TCP timestamps), for providers where TTL tuning is fragile.

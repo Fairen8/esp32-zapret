@@ -19,6 +19,7 @@ param(
     [string]$IdfPath   = "D:\esp32-zapret\esp-idf",
     [string]$ToolsPath = "D:\esp32-zapret\tools",
     [string]$PythonDir = "D:\esp32-zapret\python",
+    [string]$Target    = "esp32",
     [string]$Port      = ""
 )
 
@@ -40,7 +41,7 @@ $idfCmd = switch ($Action) {
     default         { "idf.py -B $BuildDir $Action" }
 }
 
-$inner = "set IDF_TOOLS_PATH=$ToolsPath&& "
+$inner = "set IDF_TOOLS_PATH=$ToolsPath&& set IDF_TARGET=$Target&& "
 if ($PythonDir) {
     $inner += "set PATH=$PythonDir;%PATH%&& "
 }

@@ -65,30 +65,51 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download firmware
+      - name: Download firmware (esp32)
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: firmware-bins
-          path: firmware
+          name: firmware-esp32
+          path: fw/esp32
 
-      - name: Create merged image
+      - name: Download firmware (esp32s3)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: firmware-esp32s3
+          path: fw/esp32s3
+
+      - name: Download firmware (esp32c3)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: firmware-esp32c3
+          path: fw/esp32c3
+
+      - name: Download firmware (esp32, no bot)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: firmware-esp32-nobot
+          path: fw/esp32-nobot
+
+      - name: Create merged images
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          entries = []
-          for line in Path("firmware/flash_args").read_text().splitlines():
-              parts = line.split()
-              if len(parts) == 2 and parts[0].startswith("0x"):
-                  entries.append((int(parts[0], 16), Path("firmware") / parts[1]))
-          entries.sort()
-          out = bytearray()
-          for off, path in entries:
-              if len(out) > off:
-                  raise SystemExit(f"overlapping segments at {off:#x}")
-              out += b"\xff" * (off - len(out))
-              out += path.read_bytes()
-          Path("firmware/esp32-zapret-merged.bin").write_bytes(out)
-          print(f"merged {len(out)} bytes from {len(entries)} segments")
+
+          for tgt in ("esp32", "esp32s3", "esp32c3", "esp32-nobot"):
+              d = Path("fw") / tgt
+              entries = []
+              for line in (d / "flash_args").read_text().splitlines():
+                  parts = line.split()
+                  if len(parts) == 2 and parts[0].startswith("0x"):
+                      entries.append((int(parts[0], 16), d / parts[1]))
+              entries.sort()
+              out = bytearray()
+              for off, path in entries:
+                  if len(out) > off:
+                      raise SystemExit(f"{tgt}: overlapping segments at {off:#x}")
+                  out += b"\xff" * (off - len(out))
+                  out += path.read_bytes()
+              (Path("fw") / f"esp32-zapret-{tgt}-merged.bin").write_bytes(out)
+              print(f"{tgt}: merged {len(out)} bytes from {len(entries)} segments")
           PY
 
       - name: Assemble release archive
@@ -99,35 +120,64 @@ jobs:
           for f in main components tests tools docs README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults .gitignore .gitattributes; do
             cp -r "$f" "$pkg/"
           done
-          cp firmware/bootloader/bootloader.bin firmware/partition_table/partition-table.bin firmware/esp32-zapret.bin firmware/esp32-zapret-merged.bin "$pkg/firmware/"
+          python3 - <<'PY'
+          import shutil
+          from pathlib import Path
+
+          chip = {
+              "esp32": "esp32",
+              "esp32s3": "esp32s3",
+              "esp32c3": "esp32c3",
+              "esp32-nobot": "esp32",
+          }
+          firmware = Path("pkg/esp32-zapret/firmware")
+          for tgt, chip_name in chip.items():
+              src = Path("fw") / tgt
+              dst = firmware / tgt
+              dst.mkdir(parents=True, exist_ok=True)
+              pairs = []
+              for line in (src / "flash_args").read_text().splitlines():
+                  parts = line.split()
+                  if len(parts) == 2 and parts[0].startswith("0x"):
+                      name = Path(parts[1]).name
+                      shutil.copy(src / parts[1], dst / name)
+                      pairs.append(f"{parts[0]} {name}")
+              shutil.copy(Path("fw") / f"esp32-zapret-{tgt}-merged.bin", dst / "esp32-zapret-merged.bin")
+              bat = [
+                  "@echo off\r\n",
+                  "setlocal\r\n",
+                  "set PORT=%~1\r\n",
+                  'if "%PORT%"=="" set PORT=COM3\r\n',
+                  "set ESPTOOL=esptool\r\n",
+                  "%ESPTOOL% version >nul 2>nul\r\n",
+                  "if errorlevel 1 set ESPTOOL=esptool.py\r\n",
+                  "%ESPTOOL% version >nul 2>nul\r\n",
+                  "if errorlevel 1 (\r\n",
+                  "  echo [!] esptool not found. Install: pip install esptool\r\n",
+                  "  echo [!] Or flash esp32-zapret-merged.bin at 0x0 with any ESP flash tool.\r\n",
+                  "  pause\r\n",
+                  "  exit /b 1\r\n",
+                  ")\r\n",
+                  f"echo Flashing esp32-zapret ({tgt}) to %PORT% ...\r\n",
+                  f"%ESPTOOL% --chip {chip_name} --port %PORT% --baud 460800 write_flash --flash_mode dio --flash_size 4MB {' '.join(pairs)}\r\n",
+                  "pause\r\n",
+              ]
+              (dst / "flash.bat").write_bytes("".join(bat).encode("ascii"))
+              print(f"{tgt}: packaged")
+          PY
           {
             printf 'esp32-zapret firmware (v%s)\n' "$VERSION"
             printf 'Built by GitHub Actions from tag v%s.\n\n' "$VERSION"
-            printf 'WARNING: this build uses placeholder credentials (empty Wi-Fi/token).\n'
+            printf 'WARNING: builds use placeholder credentials (empty Wi-Fi/token).\n'
             printf 'Build from source with your own main/secrets.h for real use - see INSTALL_RU.md.\n\n'
-            printf 'Files:\n'
-            printf '  bootloader.bin, partition-table.bin, esp32-zapret.bin - for esptool/flash.bat\n'
-            printf '  esp32-zapret-merged.bin - single image, flash at 0x0\n'
+            printf 'Variants:\n'
+            printf '  esp32/        - ESP32 (WROOM-32), Telegram bot\n'
+            printf '  esp32s3/      - ESP32-S3, Telegram bot\n'
+            printf '  esp32c3/      - ESP32-C3, Telegram bot\n'
+            printf '  esp32-nobot/  - ESP32, no Telegram bot (periodic TLS self-test)\n\n'
+            printf 'Each directory contains the individual binaries and a flash.bat\n'
+            printf 'plus esp32-zapret-merged.bin (flash at 0x0 with any ESP flash tool).\n'
           } > "$pkg/firmware/README.txt"
-          {
-            printf '@echo off\r\n'
-            printf 'setlocal\r\n'
-            printf 'set PORT=%%~1\r\n'
-            printf 'if "%%PORT%%"=="" set PORT=COM3\r\n'
-            printf 'set ESPTOOL=esptool\r\n'
-            printf '%%ESPTOOL%% version >nul 2>nul\r\n'
-            printf 'if errorlevel 1 set ESPTOOL=esptool.py\r\n'
-            printf '%%ESPTOOL%% version >nul 2>nul\r\n'
-            printf 'if errorlevel 1 (\r\n'
-            printf '  echo [!] esptool not found. Install: pip install esptool\r\n'
-            printf '  echo [!] Or flash esp32-zapret-merged.bin at 0x0 with any ESP flash tool.\r\n'
-            printf '  pause\r\n'
-            printf '  exit /b 1\r\n'
-            printf ')\r\n'
-            printf 'echo Flashing esp32-zapret to %%PORT%% ...\r\n'
-            printf '%%ESPTOOL%% --chip esp32 --port %%PORT%% --baud 460800 write_flash --flash_mode dio --flash_size 4MB 0x1000 bootloader.bin 0x8000 partition-table.bin 0x10000 esp32-zapret.bin\r\n'
-            printf 'pause\r\n'
-          } > "$pkg/firmware/flash.bat"
           (cd pkg && zip -r "../esp32-zapret-v${VERSION}.zip" esp32-zapret)
 
       - name: Attest build provenance
@@ -135,7 +185,10 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            firmware/esp32-zapret-merged.bin
+            fw/esp32-zapret-esp32-merged.bin
+            fw/esp32-zapret-esp32s3-merged.bin
+            fw/esp32-zapret-esp32c3-merged.bin
+            fw/esp32-zapret-esp32-nobot-merged.bin
             esp32-zapret-v${{ env.VERSION }}.zip
 
       - name: Extract release notes from CHANGELOG
@@ -144,7 +197,7 @@ jobs:
           if [ ! -s notes.md ]; then
             echo "Release v${VERSION}" > notes.md
           fi
-          printf '\n---\nRelease firmware assets are built with placeholder credentials.\nBuild from source with your own secrets.h for real use (see INSTALL_RU.md).\n' >> notes.md
+          printf '\n---\nFirmware variants: esp32, esp32s3, esp32c3, esp32 (no bot).\nRelease firmware assets are built with placeholder credentials.\nBuild from source with your own secrets.h for real use (see INSTALL_RU.md).\n' >> notes.md
 
       - name: Create and push tag
         run: |
@@ -162,6 +215,9 @@ jobs:
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --notes-file notes.md \
-            "firmware/esp32-zapret-merged.bin" \
+            "fw/esp32-zapret-esp32-merged.bin" \
+            "fw/esp32-zapret-esp32s3-merged.bin" \
+            "fw/esp32-zapret-esp32c3-merged.bin" \
+            "fw/esp32-zapret-esp32-nobot-merged.bin" \
             "esp32-zapret-v${VERSION}.zip" \
             "esp32-zapret-v${VERSION}.intoto.jsonl"

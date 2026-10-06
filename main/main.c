@@ -59,6 +59,7 @@ static bool time_is_valid(void)
     return (tm_buf.tm_year + 1900) >= 2025;
 }
 
+#if CONFIG_APP_ENABLE_TELEGRAM_BOT
 static void copy_token(const char *src, char *dst, size_t dst_sz)
 {
     size_t i = 0;
@@ -176,6 +177,7 @@ static void handle_update(const tg_update_t *u)
                         "/fool <mode> - ttl|md5sig|badsum|badseq|none");
     }
 }
+#endif /* CONFIG_APP_ENABLE_TELEGRAM_BOT */
 
 void app_main(void)
 {
@@ -216,6 +218,8 @@ void app_main(void)
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+
+#if CONFIG_APP_ENABLE_TELEGRAM_BOT
     ESP_LOGI(TAG, "ready, starting telegram long-poll");
 
     int64_t offset = 0;
@@ -241,4 +245,16 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(3000));
         }
     }
+#else
+    ESP_LOGI(TAG, "ready (no-bot build): periodic TLS self-test through esp_desync");
+
+    while (1) {
+        if (!s_connected) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+        tg_selftest();
+        vTaskDelay(pdMS_TO_TICKS(60000));
+    }
+#endif
 }

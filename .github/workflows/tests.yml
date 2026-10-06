@@ -92,9 +92,25 @@ jobs:
       matrix:
         include:
           - name: default
+            target: esp32
+            artifact: esp32
             command: "idf.py build"
           - name: disorder+md5sig
+            target: esp32
+            artifact: ""
             command: 'bash -c "echo CONFIG_ESP_DESYNC_MODE_DISORDER=y >> sdkconfig.defaults && echo CONFIG_ESP_DESYNC_FOOLING_MD5SIG=y >> sdkconfig.defaults && idf.py build"'
+          - name: esp32s3
+            target: esp32s3
+            artifact: esp32s3
+            command: "idf.py build"
+          - name: esp32c3
+            target: esp32c3
+            artifact: esp32c3
+            command: "idf.py build"
+          - name: nobot
+            target: esp32
+            artifact: esp32-nobot
+            command: 'bash -c "echo CONFIG_APP_ENABLE_TELEGRAM_BOT=n >> sdkconfig.defaults && idf.py build"'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -102,15 +118,15 @@ jobs:
         uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
         with:
           esp_idf_version: v5.3.6
-          target: esp32
+          target: ${{ matrix.target }}
           path: '.'
           command: ${{ matrix.command }}
 
       - name: Upload firmware binaries
-        if: matrix.name == 'default'
+        if: matrix.artifact != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: firmware-bins
+          name: firmware-${{ matrix.artifact }}
           path: |
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
