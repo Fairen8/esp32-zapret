@@ -8,7 +8,9 @@ updates, CI, and badge criteria.
 1. Bump `VERSION` (semver) and `version` in
    `components/esp_desync/idf_component.yml`; add a `CHANGELOG.md` section.
 2. Open a PR from `main` to `releases`; wait for the 6 required checks.
-3. Merge the PR (maintainer bypass is available; otherwise ask for review).
+3. Copilot is auto-requested for review (ruleset `copilot-review-releases`) and
+   its approval satisfies the required review. Merge once checks are green and
+   Copilot has approved (maintainer bypass remains available).
 4. The release workflow builds firmware, creates the `vX.Y.Z` tag and publishes
    the GitHub release with assets and SLSA provenance — but only after the
    maintainer **approves the `release` environment** (Actions → Review
@@ -37,6 +39,18 @@ updates, CI, and badge criteria.
 | `codeql` | all branch pushes, PRs, weekly | CodeQL analysis |
 | `scorecard` | push to `main`, weekly, manual | OpenSSF Scorecard |
 | `pr review request` | PRs to `community`/`releases` | requests maintainer review for external PRs |
+
+## Release PR review (Copilot)
+
+- Only PRs targeting `releases` get an automatic Copilot review request
+  (ruleset `copilot-review-releases`; `review_on_push` and draft reviews are
+  disabled to save AI credits — re-request manually when needed).
+- One review per PR: if new commits are pushed, the `releases` protection
+  dismisses the approval; click "Re-request review" on the PR.
+- Copilot approvals count toward the required review: repository settings,
+  Settings → Copilot → Code review (effort level **Lite**, auto-approval on).
+- Review guidance: `.github/copilot-instructions.md` (Copilot reads it from the
+  PR head branch).
 
 ## Badge criteria
 
