@@ -14,6 +14,12 @@ https://github.com/Fairen8/esp32-zapret/security/advisories/new
 
 (**Security** tab → **Report a vulnerability**.)
 
+## Contact / Контакты
+
+- Мейнтейнер: @Fairen8 — https://github.com/Fairen8
+- Приватный канал для уязвимостей / private vulnerability channel:
+  https://github.com/Fairen8/esp32-zapret/security/advisories/new
+
 ## Scope / Область
 
 - Проект — инструмент обхода DPI для личного использования, распространяется
