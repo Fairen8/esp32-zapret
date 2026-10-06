@@ -38,6 +38,11 @@ project to an ASCII path and builds there).
 
 ## 4. Use
 
+By default the device auto-detects the optimal bypass at boot and re-checks it
+every 10 minutes. `/scan` re-runs the detection, `/strategy` shows the selected
+strategy and probe statistics. Manual `/desync`, `/ttl` and `/fool` remain
+available and take precedence until the next auto-scan.
+
 Message the bot:
 
 ```

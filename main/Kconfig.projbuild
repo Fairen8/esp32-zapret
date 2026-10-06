@@ -12,4 +12,26 @@ menu "esp32-zapret application"
             logs the result over serial. Useful for verifying the bypass on a
             network without configuring a bot token.
 
+    config APP_SCAN_ON_BOOT
+        bool "Auto-detect the optimal desync strategy at boot"
+        default y
+        help
+            Probes the saved strategy first, then a list of candidates
+            (fake/split/disorder/tlsrec with different TTLs and decoy SNIs)
+            and stores the first working one in NVS.
+
+    config APP_HEALTH_CHECK_INTERVAL_S
+        int "Bypass health-check interval (seconds)"
+        default 600
+        range 60 86400
+
+    config APP_HEALTH_FAIL_THRESHOLD
+        int "Consecutive health-check failures before re-scan"
+        default 2
+        range 1 10
+
+    config APP_DOH_FALLBACK
+        bool "DNS-over-HTTPS fallback resolver (Cloudflare/Google)"
+        default y
+
 endmenu

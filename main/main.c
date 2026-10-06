@@ -14,7 +14,9 @@
 #include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "esp_idf_version.h"
+#include "sdkconfig.h"
 #include "esp_desync.h"
+#include "desync_scan.h"
 #include "app_config.h"
 #include "telegram.h"
 #include "wol.h"
@@ -153,17 +155,38 @@ static void handle_update(const tg_update_t *u)
         }
         tg_send_message(u->chat_id, reply);
 
+    } else if (strncmp(text, "/scan", 5) == 0) {
+        tg_send_message(u->chat_id, "scanning strategies, up to a minute...");
+        int rc = scan_find_working();
+        scan_status_t st;
+        scan_get_status(&st);
+        snprintf(reply, sizeof(reply), rc == 0 ? "strategy: %s" : "scan failed, staying on: %s",
+                 st.strategy);
+        tg_send_message(u->chat_id, reply);
+
+    } else if (strncmp(text, "/strategy", 9) == 0) {
+        scan_status_t st;
+        scan_get_status(&st);
+        snprintf(reply, sizeof(reply),
+                 "strategy %s\nscans %u, probes %u, fails %u",
+                 st.have ? st.strategy : "(none)",
+                 (unsigned)st.scans, (unsigned)st.probes, (unsigned)st.probe_fails);
+        tg_send_message(u->chat_id, reply);
+
     } else if (strncmp(text, "/status", 7) == 0) {
         wifi_ap_record_t ap;
         esp_desync_config_t c;
+        scan_status_t st;
         memset(&ap, 0, sizeof(ap));
         esp_wifi_sta_get_ap_info(&ap);
         esp_desync_get_config(&c);
+        scan_get_status(&st);
         snprintf(reply, sizeof(reply),
-                 "uptime %llds, heap %u, rssi %d\nmode %s, ttl %u, fool 0x%x\ntg %s (last HTTP %d)",
+                 "uptime %llds, heap %u, rssi %d\nmode %s, ttl %u, fool 0x%x\nbypass %s\ntg %s (last HTTP %d)",
                  (long long)(esp_timer_get_time() / 1000000),
                  (unsigned)esp_get_free_heap_size(), ap.rssi,
                  esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl, (unsigned)c.fooling,
+                 st.strategy,
                  tg_last_endpoint(), tg_last_http_status());
         tg_send_message(u->chat_id, reply);
 
@@ -174,7 +197,9 @@ static void handle_update(const tg_update_t *u)
                         "/status - device state\n"
                         "/desync <mode> - off|split|disorder|fake|fake_split|tlsrec\n"
                         "/ttl <n> - fake packet TTL (tune 3..8)\n"
-                        "/fool <mode> - ttl|md5sig|badsum|badseq|none");
+                        "/fool <mode> - ttl|md5sig|badsum|badseq|none\n"
+                        "/scan - re-run strategy auto-detection\n"
+                        "/strategy - show current strategy and stats");
     }
 }
 #endif /* CONFIG_APP_ENABLE_TELEGRAM_BOT */
@@ -219,10 +244,20 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
+    scan_init();
+#if CONFIG_APP_SCAN_ON_BOOT
+    ESP_LOGI(TAG, "auto-detecting optimal desync strategy...");
+    if (scan_find_working() != 0) {
+        ESP_LOGW(TAG, "no working strategy detected yet; will retry periodically");
+    }
+#endif
+
 #if CONFIG_APP_ENABLE_TELEGRAM_BOT
     ESP_LOGI(TAG, "ready, starting telegram long-poll");
 
     int64_t offset = 0;
+    int errs = 0;
+    int64_t next_health = esp_timer_get_time() + (int64_t)CONFIG_APP_HEALTH_CHECK_INTERVAL_S * 1000000;
     tg_update_t upd;
 
     while (1) {
@@ -231,8 +266,14 @@ void app_main(void)
             continue;
         }
 
+        if (esp_timer_get_time() >= next_health) {
+            scan_health_check();
+            next_health = esp_timer_get_time() + (int64_t)CONFIG_APP_HEALTH_CHECK_INTERVAL_S * 1000000;
+        }
+
         int r = tg_get_updates(&upd, offset, 25);
         if (r > 0) {
+            errs = 0;
             offset = upd.update_id + 1;
             if (upd.text[0]) {
                 ESP_LOGI(TAG, "cmd from %lld: %s", (long long)upd.chat_id, upd.text);
@@ -242,6 +283,12 @@ void app_main(void)
             /* e.g. 409 Conflict: another getUpdates consumer. Do not hammer. */
             vTaskDelay(pdMS_TO_TICKS(15000));
         } else if (r < 0) {
+            errs++;
+            if (errs >= 3) {
+                errs = 0;
+                ESP_LOGW(TAG, "repeated transport errors, checking bypass");
+                scan_health_check();
+            }
             vTaskDelay(pdMS_TO_TICKS(3000));
         }
     }
@@ -253,7 +300,9 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        tg_selftest();
+        if (tg_selftest() != 0) {
+            scan_health_check();
+        }
         vTaskDelay(pdMS_TO_TICKS(60000));
     }
 #endif

@@ -41,7 +41,8 @@ model, secure design principles and input handling.
 - **Fail-safe defaults.** If desync injection fails, the connection falls back
   to normal TLS and logs a warning; no plaintext fallback exists.
 - **Minimal attack surface.** The firmware exposes no listening services; it is
-  an outbound-only client.
+  an outbound-only client. Bypass probes are outbound-only as well and use the
+  same certificate-verified TLS stack as normal operation.
 
 ## Input validation
 
