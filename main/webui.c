@@ -191,7 +191,13 @@ static const char INDEX_HTML[] =
 "<div class=\"card\"><h2>Wi-Fi</h2><div class=\"grid\">\n"
 "<div><label>SSID</label><input id=\"w_ssid\"></div>\n"
 "<div><label>Пароль</label><input id=\"w_pass\" type=\"password\"></div></div>\n"
-"<div class=\"row\"><button onclick=\"saveWifi()\">Сохранить (нужна перезагрузка)</button></div></div>\n"
+"<div class=\"row\"><label class=\"chk\"><input type=\"checkbox\" id=\"w_static\">статический IP</label></div>\n"
+"<div class=\"grid\" id=\"w_static_fields\" style=\"display:none\">\n"
+"<div><label>IP</label><input id=\"w_ip\" placeholder=\"192.168.1.50\"></div>\n"
+"<div><label>Шлюз</label><input id=\"w_gw\" placeholder=\"192.168.1.1\"></div>\n"
+"<div><label>Маска</label><input id=\"w_mask\" value=\"255.255.255.0\"></div></div>\n"
+"<div class=\"row\"><button onclick=\"saveWifi()\">Сохранить (нужна перезагрузка)</button>\n"
+"<button class=\"gray\" onclick=\"clearPin()\">Сбросить привязку BSSID</button></div></div>\n"
 "<div class=\"card\"><h2>Бот</h2><div class=\"grid\">\n"
 "<div><label>Токен (пусто = не менять)</label><input id=\"b_token\"></div>\n"
 "<div><label>Admin chat id (0 = любой)</label><input id=\"b_admin\" type=\"number\"></div></div>\n"
@@ -227,6 +233,9 @@ static const char INDEX_HTML[] =
 "if(!modeShown){modeShown=true;document.getElementById('d_mode').value=s.mode;document.getElementById('d_ttl').value=s.ttl;\n"
 "for(const c of document.querySelectorAll('#d_fool input'))c.checked=(s.fool&+c.value)!==0;\n"
 "document.getElementById('w_ssid').value=s.wifi;document.getElementById('b_admin').value=s.admin;\n"
+"document.getElementById('w_static').checked=s.static;document.getElementById('w_ip').value=s.sip;\n"
+"document.getElementById('w_gw').value=s.sgw;document.getElementById('w_mask').value=s.smask;\n"
+"document.getElementById('w_static').onchange=()=>{document.getElementById('w_static_fields').style.display=document.getElementById('w_static').checked?'grid':'none'};\n"
 "document.getElementById('l_mac').value=s.mac;document.getElementById('l_bcast').value=s.broadcast;document.getElementById('l_port').value=s.port}\n"
 "document.getElementById('s_stats').checked=s.stats;}}catch(e){}finally{busy=false}}\n"
 "async function loadWifi(){try{const l=await api('/api/wifi/scan');const sel=document.getElementById('wifi_list');\n"
@@ -236,7 +245,8 @@ static const char INDEX_HTML[] =
 "async function provision(){try{await api('/api/provision',{ssid:document.getElementById('p_ssid').value.trim(),pass:document.getElementById('p_pass').value,token:document.getElementById('p_token').value.trim(),admin:+document.getElementById('p_admin').value||0,mac:document.getElementById('p_mac').value.trim(),broadcast:document.getElementById('p_bcast').value.trim(),port:+document.getElementById('p_port').value||9,webpass:document.getElementById('p_webpass').value||undefined});msg('сохранено, перезагрузка...')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function applyDesync(){try{await api('/api/desync',{mode:document.getElementById('d_mode').value,ttl:+document.getElementById('d_ttl').value,fool:foolMask()});msg('применено')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function runScan(){try{const r=await api('/api/scan',{});msg(r.running?'автоподбор уже идёт':'автоподбор запущен, обновите статус через минуту')}catch(e){msg('ошибка: '+e,1)}}\n"
-"async function saveWifi(){try{await api('/api/wifi',{ssid:document.getElementById('w_ssid').value.trim(),pass:document.getElementById('w_pass').value});msg('сохранено, перезагрузите устройство')}catch(e){msg('ошибка: '+e,1)}}\n"
+"async function saveWifi(){try{await api('/api/wifi',{ssid:document.getElementById('w_ssid').value.trim(),pass:document.getElementById('w_pass').value,static:document.getElementById('w_static').checked,ip:document.getElementById('w_ip').value.trim(),gw:document.getElementById('w_gw').value.trim(),mask:document.getElementById('w_mask').value.trim()});msg('сохранено, перезагрузите устройство')}catch(e){msg('ошибка: '+e,1)}}\n"
+"async function clearPin(){try{await api('/api/wifi',{clear_pin:true});msg('привязка BSSID сброшена')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function saveBot(){try{await api('/api/bot',{token:document.getElementById('b_token').value.trim(),admin:+document.getElementById('b_admin').value||0});msg('сохранено')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function saveWol(){try{await api('/api/wol',{mac:document.getElementById('l_mac').value.trim(),broadcast:document.getElementById('l_bcast').value.trim(),port:+document.getElementById('l_port').value||9});msg('сохранено')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function saveStats(){try{await api('/api/stats',{on:document.getElementById('s_stats').checked});msg('статистика обновлена')}catch(e){msg('ошибка: '+e,1)}}\n"
@@ -303,6 +313,11 @@ static esp_err_t h_status(httpd_req_t *req)
     cJSON_AddStringToObject(r, "mac", cfg->wol_mac);
     cJSON_AddStringToObject(r, "broadcast", cfg->wol_broadcast);
     cJSON_AddNumberToObject(r, "port", cfg->wol_port);
+    cJSON_AddBoolToObject(r, "static", cfg->net_static);
+    cJSON_AddStringToObject(r, "sip", cfg->static_ip);
+    cJSON_AddStringToObject(r, "sgw", cfg->static_gw);
+    cJSON_AddStringToObject(r, "smask", cfg->static_mask);
+    cJSON_AddBoolToObject(r, "bssid_pinned", cfg->wifi_bssid_set);
     return send_json(req, r);
 }
 
@@ -410,6 +425,20 @@ static esp_err_t h_wifi_save(httpd_req_t *req)
         return bad_request(req, "ssid required");
     }
     app_settings_set_wifi(ssid, jstr(b, "pass", ""));
+
+    const cJSON *static_item = cJSON_GetObjectItemCaseSensitive(b, "static");
+    const char *ip = jstr(b, "ip", "");
+    if (cJSON_IsBool(static_item) || ip[0] != 0) {
+        bool enable = cJSON_IsTrue(static_item);
+        if (enable && ip[0] == 0) {
+            cJSON_Delete(b);
+            return bad_request(req, "ip required when static is enabled");
+        }
+        app_settings_set_static(enable, ip, jstr(b, "gw", ""), jstr(b, "mask", "255.255.255.0"));
+    }
+    if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(b, "clear_pin"))) {
+        app_settings_clear_bssid();
+    }
     cJSON_Delete(b);
     return send_json(req, cJSON_CreateObject());
 }

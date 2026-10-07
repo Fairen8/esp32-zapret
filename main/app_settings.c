@@ -45,6 +45,23 @@ esp_err_t app_settings_init(void)
         load_str(h, "webpass", s_cfg.web_pass, sizeof(s_cfg.web_pass),
                  CONFIG_APP_WEB_PASSWORD);
 
+        uint8_t bssid_blob[7];
+        size_t bssid_sz = sizeof(bssid_blob);
+        if (nvs_get_blob(h, "bssid", bssid_blob, &bssid_sz) == ESP_OK &&
+            bssid_sz == sizeof(bssid_blob)) {
+            memcpy(s_cfg.wifi_bssid, bssid_blob, 6);
+            s_cfg.wifi_channel = bssid_blob[6];
+            s_cfg.wifi_bssid_set = true;
+        }
+
+        uint8_t net_static = 0;
+        nvs_get_u8(h, "static", &net_static);
+        s_cfg.net_static = net_static != 0;
+        load_str(h, "sip", s_cfg.static_ip, sizeof(s_cfg.static_ip), "");
+        load_str(h, "sgw", s_cfg.static_gw, sizeof(s_cfg.static_gw), "");
+        load_str(h, "smask", s_cfg.static_mask, sizeof(s_cfg.static_mask),
+                 "255.255.255.0");
+
         nvs_close(h);
     } else {
         strlcpy(s_cfg.wifi_ssid, CFG_WIFI_SSID, sizeof(s_cfg.wifi_ssid));
@@ -59,6 +76,9 @@ esp_err_t app_settings_init(void)
 
     if (strlen(s_cfg.web_pass) < APP_SETTINGS_WEB_PASS_MIN) {
         strlcpy(s_cfg.web_pass, CONFIG_APP_WEB_PASSWORD, sizeof(s_cfg.web_pass));
+    }
+    if (s_cfg.static_mask[0] == 0) {
+        strlcpy(s_cfg.static_mask, "255.255.255.0", sizeof(s_cfg.static_mask));
     }
 
     ESP_LOGI(TAG, "wifi=%s bot_token=%s admin=%lld (NVS over build defaults)",
@@ -188,6 +208,83 @@ esp_err_t app_settings_set_web_pass(const char *pass)
     }
     strlcpy(s_cfg.web_pass, pass, sizeof(s_cfg.web_pass));
     return store_str("webpass", s_cfg.web_pass);
+}
+
+static esp_err_t store_u8(const char *key, uint8_t val)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(h, key, val);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+void app_settings_set_bssid(const uint8_t bssid[6], uint8_t channel)
+{
+    if (s_cfg.wifi_bssid_set && s_cfg.wifi_channel == channel &&
+        memcmp(s_cfg.wifi_bssid, bssid, 6) == 0) {
+        return; /* unchanged, avoid a needless NVS write */
+    }
+    memcpy(s_cfg.wifi_bssid, bssid, 6);
+    s_cfg.wifi_channel = channel;
+    s_cfg.wifi_bssid_set = true;
+
+    uint8_t blob[7];
+    memcpy(blob, bssid, 6);
+    blob[6] = channel;
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_set_blob(h, "bssid", blob, sizeof(blob)) == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
+void app_settings_clear_bssid(void)
+{
+    s_cfg.wifi_bssid_set = false;
+    s_cfg.wifi_channel = 0;
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_erase_key(h, "bssid");
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+esp_err_t app_settings_set_static(bool enable, const char *ip, const char *gw,
+                                  const char *mask)
+{
+    strlcpy(s_cfg.static_ip, ip ? ip : "", sizeof(s_cfg.static_ip));
+    strlcpy(s_cfg.static_gw, gw ? gw : "", sizeof(s_cfg.static_gw));
+    strlcpy(s_cfg.static_mask, (mask && mask[0]) ? mask : "255.255.255.0",
+            sizeof(s_cfg.static_mask));
+    s_cfg.net_static = enable;
+
+    esp_err_t err = store_str("sip", s_cfg.static_ip);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = store_str("sgw", s_cfg.static_gw);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = store_str("smask", s_cfg.static_mask);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return store_u8("static", enable ? 1 : 0);
 }
 
 esp_err_t app_settings_erase(void)

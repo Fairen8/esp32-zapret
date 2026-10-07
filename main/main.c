@@ -35,6 +35,9 @@ static const char *TAG = "bot";
 
 static volatile bool s_connected;
 static esp_timer_handle_t s_reconnect_timer;
+static esp_timer_handle_t s_dhcp_timer;
+static int s_disconnects;
+static wifi_config_t s_sta_cfg;
 
 static void sntp_start(void);
 
@@ -44,15 +47,40 @@ static void wifi_reconnect_cb(void *arg)
     esp_wifi_connect();
 }
 
+static void dhcp_timeout_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGW(TAG, "DHCP timed out, reconnecting");
+    esp_wifi_disconnect();
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
 
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        if (!app_settings_get()->net_static && s_dhcp_timer != NULL) {
+            esp_timer_stop(s_dhcp_timer);
+            esp_timer_start_once(s_dhcp_timer, 15 * 1000 * 1000);
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
-        ESP_LOGW(TAG, "wifi disconnected, retrying in 2 s");
+        if (s_dhcp_timer != NULL) {
+            esp_timer_stop(s_dhcp_timer);
+        }
+        s_disconnects++;
+        if (s_disconnects >= 3 && app_settings_get()->wifi_bssid_set) {
+            /* The pinned radio is not working (moved AP, multi-radio SSID,
+             * DHCP broken): drop the pin and let the driver pick again. */
+            ESP_LOGW(TAG, "connection keeps failing, clearing BSSID pin");
+            app_settings_clear_bssid();
+            s_sta_cfg.sta.bssid_set = false;
+            s_sta_cfg.sta.channel = 0;
+            esp_wifi_set_config(WIFI_IF_STA, &s_sta_cfg);
+        }
+        ESP_LOGW(TAG, "wifi disconnected, retrying in 2 s (failure %d)", s_disconnects);
         /* Never sleep inside the event loop task: defer the reconnect. */
         if (s_reconnect_timer != NULL) {
             esp_timer_stop(s_reconnect_timer);
@@ -64,6 +92,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
         s_connected = true;
+        s_disconnects = 0;
+        if (s_dhcp_timer != NULL) {
+            esp_timer_stop(s_dhcp_timer);
+        }
+        /* Remember the radio that worked so the next boot connects faster. */
+        wifi_ap_record_t ap;
+        uint8_t channel = 0;
+        wifi_second_chan_t second;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK &&
+            esp_wifi_get_channel(&channel, &second) == ESP_OK) {
+            app_settings_set_bssid(ap.bssid, channel);
+        }
         sntp_start();
     }
 }
@@ -148,6 +188,23 @@ static bool time_set_from_build(void)
     struct timeval tv = { .tv_sec = t, .tv_usec = 0 };
     settimeofday(&tv, NULL);
     return time_is_valid();
+}
+
+/* Lightweight liveness mark so a silent console is distinguishable from a
+ * stuck application (field debugging on USB-only boards). */
+static void heartbeat_log(void)
+{
+    static int64_t next_us;
+    int64_t now = esp_timer_get_time();
+    if (now < next_us) {
+        return;
+    }
+    next_us = now + (int64_t)5 * 60 * 1000000;
+    wifi_ap_record_t ap;
+    memset(&ap, 0, sizeof(ap));
+    esp_wifi_sta_get_ap_info(&ap);
+    ESP_LOGI(TAG, "heartbeat: uptime %llds, heap %u, rssi %d",
+             (long long)(now / 1000000), (unsigned)esp_get_free_heap_size(), ap.rssi);
 }
 
 #if CONFIG_APP_ENABLE_TELEGRAM_BOT
@@ -367,7 +424,7 @@ void app_main(void)
         setup_mode_run(); /* never returns */
     }
 
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&wcfg));
@@ -378,16 +435,53 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(esp_timer_create(&reconnect_args, &s_reconnect_timer));
 
+    const esp_timer_create_args_t dhcp_args = {
+        .callback = dhcp_timeout_cb,
+        .name = "dhcp_timeout",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&dhcp_args, &s_dhcp_timer));
+
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
 
-    wifi_config_t sta = {0};
     const app_settings_t *settings = app_settings_get();
-    strlcpy((char *)sta.sta.ssid, settings->wifi_ssid, sizeof(sta.sta.ssid));
-    strlcpy((char *)sta.sta.password, settings->wifi_pass, sizeof(sta.sta.password));
+    memset(&s_sta_cfg, 0, sizeof(s_sta_cfg));
+    strlcpy((char *)s_sta_cfg.sta.ssid, settings->wifi_ssid, sizeof(s_sta_cfg.sta.ssid));
+    strlcpy((char *)s_sta_cfg.sta.password, settings->wifi_pass, sizeof(s_sta_cfg.sta.password));
+    if (settings->wifi_bssid_set) {
+        memcpy(s_sta_cfg.sta.bssid, settings->wifi_bssid, sizeof(s_sta_cfg.sta.bssid));
+        s_sta_cfg.sta.bssid_set = true;
+        s_sta_cfg.sta.channel = settings->wifi_channel;
+        ESP_LOGI(TAG, "pinned to AP %02x:%02x:%02x:%02x:%02x:%02x (channel %u)",
+                 settings->wifi_bssid[0], settings->wifi_bssid[1], settings->wifi_bssid[2],
+                 settings->wifi_bssid[3], settings->wifi_bssid[4], settings->wifi_bssid[5],
+                 (unsigned)settings->wifi_channel);
+    }
+
+    if (settings->net_static && settings->static_ip[0]) {
+        esp_netif_ip_info_t ip_info = {0};
+        if (esp_netif_str_to_ip4(settings->static_ip, &ip_info.ip) == ESP_OK &&
+            esp_netif_str_to_ip4(settings->static_gw, &ip_info.gw) == ESP_OK &&
+            esp_netif_str_to_ip4(settings->static_mask, &ip_info.netmask) == ESP_OK) {
+            esp_netif_dhcpc_stop(sta_netif);
+            if (esp_netif_set_ip_info(sta_netif, &ip_info) == ESP_OK) {
+                esp_netif_dns_info_t dns = {0};
+                dns.ip.type = ESP_IPADDR_TYPE_V4;
+                dns.ip.u_addr.ip4 = ip_info.gw;
+                esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &dns);
+                ESP_LOGI(TAG, "static ip %s gw %s mask %s", settings->static_ip,
+                         settings->static_gw, settings->static_mask);
+            } else {
+                ESP_LOGW(TAG, "failed to apply static ip, falling back to DHCP");
+                esp_netif_dhcpc_start(sta_netif);
+            }
+        } else {
+            ESP_LOGW(TAG, "invalid static ip config, using DHCP");
+        }
+    }
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &s_sta_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
     esp_wifi_set_ps(WIFI_PS_NONE);
 
@@ -463,6 +557,7 @@ void app_main(void)
         }
 
         stats_anon_tick();
+        heartbeat_log();
 
         int r = tg_get_updates(&upd, offset, 25);
         if (r > 0) {
@@ -497,6 +592,7 @@ void app_main(void)
             scan_health_check();
         }
         stats_anon_tick();
+        heartbeat_log();
         vTaskDelay(pdMS_TO_TICKS(60000));
     }
 #endif
