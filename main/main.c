@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -244,12 +245,31 @@ static const char *cmd_args(const char *text, const char *name)
     return q;
 }
 
+/* Simple global command rate limit: one chat cannot flood the device. */
+#define CMD_RATE_LIMIT_PER_MIN 20
+
+static bool rate_limit_ok(void)
+{
+    static int64_t window_start;
+    static int count;
+    int64_t now = esp_timer_get_time();
+    if (now - window_start > 60 * 1000000) {
+        window_start = now;
+        count = 0;
+    }
+    return ++count <= CMD_RATE_LIMIT_PER_MIN;
+}
+
 static void handle_update(const tg_update_t *u)
 {
     const app_settings_t *settings = app_settings_get();
 
     if (settings->tg_admin_id != 0 && u->chat_id != settings->tg_admin_id) {
         tg_send_message(u->chat_id, "access denied");
+        return;
+    }
+    if (!rate_limit_ok()) {
+        tg_send_message(u->chat_id, "too many commands, try again in a minute");
         return;
     }
 
@@ -333,6 +353,35 @@ static void handle_update(const tg_update_t *u)
         }
         tg_send_message(u->chat_id, reply);
 
+    } else if (cmd_args(text, "heap") != NULL) {
+        snprintf(reply, sizeof(reply), "heap free %u, min ever %u, largest block %u",
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)esp_get_minimum_free_heap_size(),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        tg_send_message(u->chat_id, reply);
+
+    } else if (cmd_args(text, "ip") != NULL) {
+        esp_netif_ip_info_t ip_info;
+        char ips[16] = "-";
+        char gws[16] = "-";
+        memset(&ip_info, 0, sizeof(ip_info));
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif != NULL && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            snprintf(ips, sizeof(ips), IPSTR, IP2STR(&ip_info.ip));
+            snprintf(gws, sizeof(gws), IPSTR, IP2STR(&ip_info.gw));
+        }
+        wifi_ap_record_t ap;
+        memset(&ap, 0, sizeof(ap));
+        esp_wifi_sta_get_ap_info(&ap);
+        snprintf(reply, sizeof(reply), "ip %s, gw %s\nssid %s, rssi %d",
+                 ips, gws, ap.ssid[0] ? (const char *)ap.ssid : "-", ap.rssi);
+        tg_send_message(u->chat_id, reply);
+
+    } else if (cmd_args(text, "reboot") != NULL) {
+        tg_send_message(u->chat_id, "rebooting...");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+
     } else if (cmd_args(text, "scan") != NULL) {
         tg_send_message(u->chat_id, "scanning strategies, up to a minute...");
         int rc = scan_find_working();
@@ -397,6 +446,9 @@ static void handle_update(const tg_update_t *u)
                         "/desync <mode> - off|split|disorder|fake|fake_split|tlsrec\n"
                         "/ttl <n> - fake packet TTL (tune 3..8)\n"
                         "/fool <mode> - ttl|md5sig|badsum|badseq|none\n"
+                        "/heap - free/min/largest heap block\n"
+                        "/ip - current IP, gateway, SSID and RSSI\n"
+                        "/reboot - restart the device\n"
                         "/scan - re-run strategy auto-detection (drops manual tuning)\n"
                         "/strategy - show current strategy and stats\n"
                         "/stats on|off - anonymous statistics (optional)\n"
