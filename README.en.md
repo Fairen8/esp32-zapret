@@ -128,6 +128,8 @@ Enable/disable with `/stats on` / `/stats off` (persisted in NVS) or
 `CONFIG_APP_STATS_DEFAULT_ON=y` at build time. A report is sent at boot and at
 most once a day; if the server is unavailable the attempt is silently skipped.
 
+Report format and server requirements: [docs/STATS_BACKEND_SPEC.md](docs/STATS_BACKEND_SPEC.md) (RU).
+
 ## Quick start
 
 ```bash
