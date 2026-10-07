@@ -34,6 +34,12 @@ int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int
 int https_request(https_conn_t *c, const char *path, const char *accept,
                   char *resp, size_t resp_sz, int timeout_ms, int *http_status);
 
+/* HTTP/1.1 POST with an application/json body (Connection: close). Returns the
+ * response length (>0) or -1; fills http_status when non-NULL. The response
+ * body is only used to parse the status line, so a small buffer is enough. */
+int https_post_json(https_conn_t *c, const char *path, const char *json,
+                    int timeout_ms, int *http_status);
+
 void https_close(https_conn_t *c);
 
 /* IPv4 address (dotted quad) the last connection actually used, "-" if none. */
