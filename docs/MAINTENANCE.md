@@ -16,6 +16,9 @@ updates, CI, and badge criteria.
    maintainer **approves the `release` environment** (Actions → Review
    deployments). The process is idempotent: if the tag already exists,
    publishing is skipped.
+5. If the repository secret `IDF_COMPONENT_API_TOKEN` is set, the same workflow
+   additionally uploads `components/esp_desync` (version = `VERSION`) to the
+   ESP Component Registry. Without the secret the step is skipped silently.
 
 ## Dependency updates
 

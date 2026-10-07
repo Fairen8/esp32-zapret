@@ -54,9 +54,13 @@ Message the bot:
 ```
 /wake [AA:BB:CC:DD:EE:FF]   send a magic packet
 /status                     device state (uptime, heap, RSSI, mode, Telegram IP)
-/desync <mode>              off | split | disorder | fake | fake_split | tlsrec
+/desync <mode>              off | split | disorder | fake | fake_split | tlsrec | seqovl
 /ttl <1..255>               fake packet TTL (start with 3, tune up/down)
-/fool <mode>                ttl | md5sig | badsum | badseq | none
+/fool <mode>                ttl | md5sig | badsum | badseq | datanoack | ts | none
+/rndsni on|off              random decoy SNI (and fake size) per packet
+/scan                       re-run auto-detection (drops manual tuning)
+/strategy                   current strategy and probe statistics
+/heap, /ip, /reboot         diagnostics and restart
 ```
 
 ## Build variants
@@ -92,9 +96,13 @@ idf.py menuconfig   # esp32-zapret application -> Telegram bot (disable)
 
 Release archives contain per-target directories (`esp32/`, `esp32s3/`,
 `esp32c3/`, `esp32-nobot/`) with individual binaries, a `flash.bat` and a merged
-image (`esp32-zapret-merged.bin`, flash at `0x0`). Prebuilt images use
-**placeholder credentials** — build from source with your own `secrets.h` for
-real use.
+image (`esp32-zapret-merged.bin`, flash at `0x0`).
+
+Since v1.1.0 no toolchain is needed: on first boot the device starts a setup
+access point `esp32-zapret-XXXX` (password `zapret12345`). Connect to it, open
+`http://192.168.4.1` and set Wi-Fi, the bot token, the PC MAC and a new web
+password. The same settings page then works on the device IP (login `admin`);
+the serial console (`setwifi`, `settoken`, `setmac`, ...) is an alternative.
 
 ## Troubleshooting
 

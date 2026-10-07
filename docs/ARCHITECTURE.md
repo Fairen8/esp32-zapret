@@ -82,7 +82,12 @@ component.
 
 ## Interfaces
 
-- **Telegram commands:** `/wake`, `/status`, `/desync`, `/ttl`, `/fool`.
+- **Telegram commands:** `/wake`, `/status`, `/desync`, `/ttl`, `/fool`,
+  `/rndsni`, `/scan`, `/strategy`, `/stats`, `/heap`, `/ip`, `/reboot`.
+- **Web UI / setup mode:** HTTP on port 80; in setup mode the device runs its
+  own AP (`esp32-zapret-XXXX`) and serves an unauthenticated provisioning page,
+  otherwise the settings page requires HTTP Basic auth (`admin` + web password).
+  Settings are stored in NVS via `app_settings.c`.
 - **Component API:** `components/esp_desync/include/esp_desync.h`
   (`esp_desync_init`, `esp_desync_connect[_ip]`, `esp_desync_resolve`,
   `esp_desync_write`, `esp_desync_read`, `esp_desync_close`).
