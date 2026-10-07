@@ -180,6 +180,7 @@ static const char INDEX_HTML[] =
 "<option value=\"disorder\">disorder</option><option value=\"fake\">fake</option>\n"
 "<option value=\"fake_split\">fake_split</option><option value=\"tlsrec\">tlsrec</option>\n"
 "</select></div><div><label>TTL фейка</label><input id=\"d_ttl\" type=\"number\" min=\"1\" max=\"255\"></div></div>\n"
+"<div class=\"row\"><label class=\"chk\"><input type=\"checkbox\" id=\"d_rndsni\">rndsni (случайный SNI)</label></div>\n"
 "<div class=\"row\" id=\"d_fool\">\n"
 "<label class=\"chk\"><input type=\"checkbox\" value=\"1\">ttl</label>\n"
 "<label class=\"chk\"><input type=\"checkbox\" value=\"2\">badsum</label>\n"
@@ -231,6 +232,7 @@ static const char INDEX_HTML[] =
 "'<b>Стратегия</b><span>'+s.strategy+'</span>'+'<b>Пробы</b><span>'+s.probes+' (fails '+s.fails+', scans '+s.scans+')</span>'+\n"
 "'<b>Telegram</b><span>'+s.tg+' (HTTP '+s.http+')</span>'+'<b>Heap</b><span>'+s.heap+' B, uptime '+Math.floor(s.uptime/60)+' мин</span>';\n"
 "if(!modeShown){modeShown=true;document.getElementById('d_mode').value=s.mode;document.getElementById('d_ttl').value=s.ttl;\n"
+"document.getElementById('d_rndsni').checked=!!s.rndsni;\n"
 "for(const c of document.querySelectorAll('#d_fool input'))c.checked=(s.fool&+c.value)!==0;\n"
 "document.getElementById('w_ssid').value=s.wifi;document.getElementById('b_admin').value=s.admin;\n"
 "document.getElementById('w_static').checked=s.static;document.getElementById('w_ip').value=s.sip;\n"
@@ -243,7 +245,7 @@ static const char INDEX_HTML[] =
 "sel.onchange=()=>{document.getElementById('p_ssid').value=sel.value};msg('найдено сетей: '+l.length)}catch(e){msg('скан не удался: '+e,1)}}\n"
 "function foolMask(){let m=0;for(const c of document.querySelectorAll('#d_fool input'))if(c.checked)m|=+c.value;return m}\n"
 "async function provision(){try{await api('/api/provision',{ssid:document.getElementById('p_ssid').value.trim(),pass:document.getElementById('p_pass').value,token:document.getElementById('p_token').value.trim(),admin:+document.getElementById('p_admin').value||0,mac:document.getElementById('p_mac').value.trim(),broadcast:document.getElementById('p_bcast').value.trim(),port:+document.getElementById('p_port').value||9,webpass:document.getElementById('p_webpass').value||undefined});msg('сохранено, перезагрузка...')}catch(e){msg('ошибка: '+e,1)}}\n"
-"async function applyDesync(){try{await api('/api/desync',{mode:document.getElementById('d_mode').value,ttl:+document.getElementById('d_ttl').value,fool:foolMask()});msg('применено')}catch(e){msg('ошибка: '+e,1)}}\n"
+"async function applyDesync(){try{await api('/api/desync',{mode:document.getElementById('d_mode').value,ttl:+document.getElementById('d_ttl').value,fool:foolMask(),rndsni:document.getElementById('d_rndsni').checked});msg('применено')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function runScan(){try{const r=await api('/api/scan',{});msg(r.running?'автоподбор уже идёт':'автоподбор запущен, обновите статус через минуту')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function saveWifi(){try{await api('/api/wifi',{ssid:document.getElementById('w_ssid').value.trim(),pass:document.getElementById('w_pass').value,static:document.getElementById('w_static').checked,ip:document.getElementById('w_ip').value.trim(),gw:document.getElementById('w_gw').value.trim(),mask:document.getElementById('w_mask').value.trim()});msg('сохранено, перезагрузите устройство')}catch(e){msg('ошибка: '+e,1)}}\n"
 "async function clearPin(){try{await api('/api/wifi',{clear_pin:true});msg('привязка BSSID сброшена')}catch(e){msg('ошибка: '+e,1)}}\n"
@@ -302,6 +304,7 @@ static esp_err_t h_status(httpd_req_t *req)
     cJSON_AddNumberToObject(r, "ttl", dc.fake_ttl);
     cJSON_AddNumberToObject(r, "fool", dc.fooling);
     cJSON_AddBoolToObject(r, "manual", st.manual);
+    cJSON_AddBoolToObject(r, "rndsni", dc.rndsni);
     cJSON_AddStringToObject(r, "strategy", st.have ? st.strategy : "");
     cJSON_AddNumberToObject(r, "scans", st.scans);
     cJSON_AddNumberToObject(r, "probes", st.probes);
@@ -529,6 +532,10 @@ static esp_err_t h_desync(httpd_req_t *req)
     if (cJSON_IsNumber(fool) && fool->valueint >= 0) {
         c.fooling = (uint32_t)fool->valueint;
     }
+    const cJSON *rndsni = cJSON_GetObjectItemCaseSensitive(b, "rndsni");
+    if (cJSON_IsBool(rndsni)) {
+        c.rndsni = cJSON_IsTrue(rndsni);
+    }
     cJSON_Delete(b);
 
     esp_desync_set_config(&c);
@@ -538,6 +545,7 @@ static esp_err_t h_desync(httpd_req_t *req)
     cJSON_AddStringToObject(r, "mode", esp_desync_mode_name(c.mode));
     cJSON_AddNumberToObject(r, "ttl", c.fake_ttl);
     cJSON_AddNumberToObject(r, "fool", c.fooling);
+    cJSON_AddBoolToObject(r, "rndsni", c.rndsni);
     return send_json(req, r);
 }
 

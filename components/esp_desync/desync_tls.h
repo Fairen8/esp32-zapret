@@ -10,6 +10,10 @@
  * real hello's tail raw, so keep this comfortably above 1 KB. */
 #define DESYNC_FAKE_MAX 1536
 
+/* Generates a random decoy hostname (random lower-case label + common TLD)
+ * into buf. Returns the length, 0 when the buffer is too small. */
+size_t desync_tls_random_sni(char *buf, size_t buf_sz);
+
 /* Find the SNI hostname inside a TLS ClientHello. Returns 0 on success and
  * fills sni_off/sni_len, -1 if the buffer is not a parseable ClientHello
  * with SNI. */

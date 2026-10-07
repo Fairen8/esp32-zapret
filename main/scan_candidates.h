@@ -15,6 +15,7 @@ typedef struct {
     esp_desync_mode_t mode;
     uint32_t fooling;
     uint8_t ttl;
+    bool rndsni;
     char sni[SCAN_SNI_MAX];
 } scan_candidate_t;
 

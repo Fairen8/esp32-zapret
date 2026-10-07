@@ -37,6 +37,10 @@ typedef struct {
     int16_t  split_pos2;
     uint16_t op_delay_ms;
     uint8_t  repeats;
+    /* Randomize the decoy SNI for every fake packet (varying fake size). */
+    bool     rndsni;
+    /* With repeats > 1, use a different built-in decoy SNI per fake. */
+    bool     multi_sni;
 } esp_desync_config_t;
 
 esp_err_t esp_desync_init(const esp_desync_config_t *cfg);

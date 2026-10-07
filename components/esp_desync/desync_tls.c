@@ -13,6 +13,32 @@ static uint32_t rd24(const uint8_t *p)
     return ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
 }
 
+size_t desync_tls_random_sni(char *buf, size_t buf_sz)
+{
+    static const char alnum[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+    static const char *const tlds[] = { "com", "org", "net", "ru" };
+
+    if (buf == NULL || buf_sz < 16) {
+        return 0;
+    }
+    size_t label = 6 + (esp_random() % 13); /* 6..18 characters */
+    if (label + 6 >= buf_sz) {
+        label = buf_sz - 6;
+    }
+
+    size_t p = 0;
+    for (size_t i = 0; i < label; i++) {
+        buf[p++] = alnum[esp_random() % (sizeof(alnum) - 1)];
+    }
+    buf[p++] = '.';
+    const char *tld = tlds[esp_random() % (sizeof(tlds) / sizeof(tlds[0]))];
+    size_t tld_len = strlen(tld);
+    memcpy(buf + p, tld, tld_len);
+    p += tld_len;
+    buf[p] = 0;
+    return p;
+}
+
 int desync_tls_find_sni(const uint8_t *buf, size_t len, size_t *sni_off, size_t *sni_len)
 {
     *sni_off = 0;

@@ -36,6 +36,7 @@ static void apply_candidate(const scan_candidate_t *c)
     cfg.fooling = c->fooling;
     cfg.fake_ttl = c->ttl ? c->ttl : 64;
     cfg.fake_sni = (c->sni[0] != 0) ? c->sni : NULL;
+    cfg.rndsni = c->rndsni;
     esp_desync_set_config(&cfg);
 }
 
@@ -82,6 +83,7 @@ static void capture_current(scan_candidate_t *out)
     out->mode = cfg.mode;
     out->fooling = cfg.fooling;
     out->ttl = cfg.fake_ttl;
+    out->rndsni = cfg.rndsni;
     if (cfg.fake_sni != NULL) {
         strlcpy(out->sni, cfg.fake_sni, sizeof(out->sni));
     }

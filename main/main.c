@@ -382,6 +382,25 @@ static void handle_update(const tg_update_t *u)
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
 
+    } else if ((args = cmd_args(text, "rndsni")) != NULL) {
+        char name[8] = {0};
+        if (args[0]) {
+            copy_token(args, name, sizeof(name));
+        }
+        esp_desync_config_t c;
+        esp_desync_get_config(&c);
+        if (name[0] == 0) {
+            snprintf(reply, sizeof(reply), "rndsni: %s", c.rndsni ? "on" : "off");
+        } else if (strcmp(name, "on") == 0 || strcmp(name, "off") == 0) {
+            c.rndsni = strcmp(name, "on") == 0;
+            esp_desync_set_config(&c);
+            scan_set_manual(true);
+            snprintf(reply, sizeof(reply), "rndsni: %s (manual)", name);
+        } else {
+            snprintf(reply, sizeof(reply), "usage: /rndsni on|off");
+        }
+        tg_send_message(u->chat_id, reply);
+
     } else if (cmd_args(text, "scan") != NULL) {
         tg_send_message(u->chat_id, "scanning strategies, up to a minute...");
         int rc = scan_find_working();
@@ -430,10 +449,11 @@ static void handle_update(const tg_update_t *u)
         esp_desync_get_config(&c);
         scan_get_status(&st);
         snprintf(reply, sizeof(reply),
-                 "uptime %llds, heap %u, rssi %d\nmode %s, ttl %u, fool 0x%x\nbypass %s (%s)\ntg %s (last HTTP %d)",
+                 "uptime %llds, heap %u, rssi %d\nmode %s, ttl %u, fool 0x%x, rndsni %s\nbypass %s (%s)\ntg %s (last HTTP %d)",
                  (long long)(esp_timer_get_time() / 1000000),
                  (unsigned)esp_get_free_heap_size(), ap.rssi,
                  esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl, (unsigned)c.fooling,
+                 c.rndsni ? "on" : "off",
                  st.have ? st.strategy : "(none)", st.manual ? "manual" : "auto",
                  tg_last_endpoint(), tg_last_http_status());
         tg_send_message(u->chat_id, reply);
@@ -446,6 +466,7 @@ static void handle_update(const tg_update_t *u)
                         "/desync <mode> - off|split|disorder|fake|fake_split|tlsrec\n"
                         "/ttl <n> - fake packet TTL (tune 3..8)\n"
                         "/fool <mode> - ttl|md5sig|badsum|badseq|none\n"
+                        "/rndsni on|off - random decoy SNI for every fake\n"
                         "/heap - free/min/largest heap block\n"
                         "/ip - current IP, gateway, SSID and RSSI\n"
                         "/reboot - restart the device\n"

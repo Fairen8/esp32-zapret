@@ -46,6 +46,7 @@ int main(void)
     bool yandex = false;
     bool split = false;
     bool tlsrec = false;
+    bool rndsni = false;
     for (int i = 0; i < n; i++) {
         if (strcmp(c[i].sni, "www.yandex.ru") == 0) {
             yandex = true;
@@ -56,10 +57,17 @@ int main(void)
         if (c[i].mode == ESP_DESYNC_MODE_TLSREC) {
             tlsrec = true;
         }
+        if (c[i].rndsni) {
+            rndsni = true;
+            char rbuf[96];
+            scan_format(&c[i], rbuf, sizeof(rbuf));
+            CHECK(strstr(rbuf, "rndsni") != NULL);
+        }
     }
     CHECK(yandex);
     CHECK(split);
     CHECK(tlsrec);
+    CHECK(rndsni);
 
     /* Formatting. */
     char buf[96];

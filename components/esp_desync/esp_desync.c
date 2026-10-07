@@ -68,6 +68,8 @@ static const esp_desync_config_t s_default = {
     .split_pos2 = -1,
     .op_delay_ms = CONFIG_ESP_DESYNC_OP_DELAY_MS,
     .repeats = CONFIG_ESP_DESYNC_FAKE_REPEATS,
+    .rndsni = false,
+    .multi_sni = false,
 };
 
 static esp_desync_config_t s_cfg;
@@ -155,6 +157,19 @@ static ssize_t tlsrec_send(int fd, const uint8_t *hello, size_t len, int p1, uns
     return (ssize_t)len;
 }
 
+/* With multi_sni the first fake keeps the configured SNI and the following
+ * ones rotate through widely-allowed decoy domains. */
+static const char *multi_decoy(const char *primary, uint8_t i)
+{
+    static const char *const decoys[] = {
+        "www.iana.org", "www.yandex.ru", "mail.ru", "www.google.com",
+    };
+    if (i == 0 || primary == NULL) {
+        return primary;
+    }
+    return decoys[(i - 1) % (sizeof(decoys) / sizeof(decoys[0]))];
+}
+
 static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
 {
     const esp_desync_config_t *c = &s_cfg;
@@ -197,27 +212,38 @@ static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
     case ESP_DESYNC_MODE_FAKE:
     case ESP_DESYNC_MODE_FAKE_SPLIT: {
         uint8_t fake[DESYNC_FAKE_MAX];
-        size_t fl = desync_tls_build_fake(fake, sizeof(fake), c->fake_sni, hello, len, true);
+        char rnd_sni[32];
         uint32_t snd = 0;
         uint32_t rcv = 0;
-        if (fl > 0 && desync_pcb_get_state(s_flow.src_port, s_flow.dst_port, &snd, &rcv) == 0) {
+        if (desync_pcb_get_state(s_flow.src_port, s_flow.dst_port, &snd, &rcv) != 0) {
+            ESP_LOGW(TAG, "no PCB state for fake, skipping");
+        } else {
             for (uint8_t i = 0; i < c->repeats; i++) {
+                const char *sni = c->fake_sni;
+                if (c->rndsni && desync_tls_random_sni(rnd_sni, sizeof(rnd_sni)) > 0) {
+                    sni = rnd_sni;
+                } else if (c->multi_sni) {
+                    sni = multi_decoy(c->fake_sni, i);
+                }
+                size_t fl = desync_tls_build_fake(fake, sizeof(fake), sni, hello, len, true);
+                if (fl == 0) {
+                    ESP_LOGW(TAG, "failed to build the fake hello");
+                    break;
+                }
                 if (desync_inject_tcp(s_flow.dst_ip, s_flow.src_port, s_flow.dst_port,
                                       snd, rcv, fake, fl, c->fooling, c->fake_ttl,
                                       c->badseq_offset) != 0) {
                     ESP_LOGW(TAG, "fake injection failed");
                     break;
                 }
+                ESP_LOGI(TAG, "fake %u/%u sent: sni=%s len=%u ttl=%u fool=0x%x",
+                         (unsigned)(i + 1), (unsigned)c->repeats, sni, (unsigned)fl,
+                         (unsigned)((c->fooling & ESP_DESYNC_FOOL_TTL) ? c->fake_ttl : 64),
+                         (unsigned)c->fooling);
             }
-            ESP_LOGI(TAG, "fake sent: sni=%s len=%u ttl=%u fool=0x%x",
-                     c->fake_sni, (unsigned)fl,
-                     (unsigned)((c->fooling & ESP_DESYNC_FOOL_TTL) ? c->fake_ttl : 64),
-                     (unsigned)c->fooling);
             if (c->op_delay_ms) {
                 vTaskDelay(pdMS_TO_TICKS(c->op_delay_ms));
             }
-        } else {
-            ESP_LOGW(TAG, "no PCB state for fake, skipping");
         }
         if (c->mode == ESP_DESYNC_MODE_FAKE) {
             return send_all(fd, hello, len);

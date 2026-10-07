@@ -12,7 +12,7 @@ static const char *DECOYS[] = {
 };
 
 static int add(scan_candidate_t *out, int n, int max, esp_desync_mode_t mode,
-               uint32_t fooling, uint8_t ttl, const char *sni)
+               uint32_t fooling, uint8_t ttl, const char *sni, bool rndsni)
 {
     if (n >= max) {
         return n;
@@ -20,6 +20,7 @@ static int add(scan_candidate_t *out, int n, int max, esp_desync_mode_t mode,
     out[n].mode = mode;
     out[n].fooling = fooling;
     out[n].ttl = ttl;
+    out[n].rndsni = rndsni;
     out[n].sni[0] = 0;
     if (sni != NULL) {
         size_t len = strlen(sni);
@@ -37,29 +38,34 @@ int scan_build_candidates(scan_candidate_t *out, int max)
     int n = 0;
 
     /* 1) no desync: the optimal choice when the network is not filtered */
-    n = add(out, n, max, ESP_DESYNC_MODE_OFF, ESP_DESYNC_FOOL_NONE, 64, NULL);
+    n = add(out, n, max, ESP_DESYNC_MODE_OFF, ESP_DESYNC_FOOL_NONE, 64, NULL, false);
 
     /* 2) fake+split with ascending TTL: the first success is the lowest
      *    working TTL, i.e. the closest to the DPI hop (zapret methodology) */
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 3, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 8, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 12, DECOYS[0]);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 3, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 8, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 12, DECOYS[0], false);
 
     /* 3) alternative decoy SNIs */
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[1]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[2]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_TTL, 3, DECOYS[0]);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[1], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[2], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_TTL, 3, DECOYS[0], false);
 
-    /* 4) fooling variants for providers where TTL tuning is fragile */
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_MD5SIG, 64, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_BADSEQ, 64, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_DATANOACK, 64, DECOYS[0]);
+    /* 4) randomized SNI: every fake has a different hostname and size, which
+     *    defeats DPI that fingerprints the decoy or the packet length */
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TTL, 5, DECOYS[0], true);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_TTL, 5, DECOYS[0], true);
 
-    /* 5) no-fake methods */
-    n = add(out, n, max, ESP_DESYNC_MODE_SPLIT, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_DISORDER, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0]);
-    n = add(out, n, max, ESP_DESYNC_MODE_TLSREC, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0]);
+    /* 5) fooling variants for providers where TTL tuning is fragile */
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_MD5SIG, 64, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_BADSEQ, 64, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_DATANOACK, 64, DECOYS[0], false);
+
+    /* 6) no-fake methods */
+    n = add(out, n, max, ESP_DESYNC_MODE_SPLIT, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_DISORDER, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_TLSREC, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0], false);
 
     return n;
 }
@@ -93,6 +99,7 @@ void scan_format(const scan_candidate_t *c, char *buf, size_t buf_sz)
         snprintf(buf, buf_sz, "%s", mode_name(c->mode));
         return;
     }
-    snprintf(buf, buf_sz, "%s fool=%s ttl=%u sni=%s",
-             mode_name(c->mode), fool_name(c->fooling), (unsigned)c->ttl, c->sni);
+    snprintf(buf, buf_sz, "%s fool=%s ttl=%u sni=%s%s",
+             mode_name(c->mode), fool_name(c->fooling), (unsigned)c->ttl, c->sni,
+             c->rndsni ? " rndsni" : "");
 }

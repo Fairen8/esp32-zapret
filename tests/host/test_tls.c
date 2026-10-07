@@ -227,6 +227,42 @@ static void test_build_fake_small_and_long(void)
     CHECK(fake[so + 199] == 'a');
 }
 
+static void test_random_sni(void)
+{
+    static const char *tlds[] = { "com", "org", "net", "ru" };
+    char buf[32];
+
+    for (int i = 0; i < 200; i++) {
+        size_t n = desync_tls_random_sni(buf, sizeof(buf));
+        CHECK(n >= 9 && n <= 24);
+        CHECK(strlen(buf) == n);
+
+        const char *dot = strchr(buf, '.');
+        CHECK(dot != NULL && dot > buf && dot[1] != 0);
+
+        bool tld_ok = false;
+        for (int t = 0; t < 4; t++) {
+            if (strcmp(dot + 1, tlds[t]) == 0) {
+                tld_ok = true;
+            }
+        }
+        CHECK(tld_ok);
+        for (const char *p = buf; p < dot; p++) {
+            CHECK((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9'));
+        }
+
+        uint8_t fake[DESYNC_FAKE_MAX];
+        size_t fl = desync_tls_build_fake(fake, sizeof(fake), buf, NULL, 0, false);
+        CHECK(fl > 0);
+        size_t so = 0;
+        size_t sl = 0;
+        CHECK(desync_tls_find_sni(fake, fl, &so, &sl) == 0);
+        CHECK(sl == strlen(buf));
+    }
+
+    CHECK(desync_tls_random_sni(buf, 8) == 0);
+}
+
 int main(void)
 {
     test_find_sni_basic();
@@ -235,6 +271,7 @@ int main(void)
     test_build_fake_default_sni();
     test_build_fake_clone_random();
     test_build_fake_small_and_long();
+    test_random_sni();
 
     if (g_fail) {
         printf("TLS TESTS FAILED: %d\n", g_fail);
