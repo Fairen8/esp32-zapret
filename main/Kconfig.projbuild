@@ -34,6 +34,22 @@ menu "esp32-zapret application"
         bool "DNS-over-HTTPS fallback resolver (Cloudflare/Google)"
         default y
 
+    config APP_SNTP_SERVERS
+        string "SNTP servers (comma-separated, tried in order)"
+        default "pool.ntp.org,time.google.com,time.cloudflare.com"
+        help
+            Up to CONFIG_LWIP_SNTP_MAX_SERVERS entries are used. Extra
+            entries are ignored; a single unreachable server no longer
+            blocks the clock forever.
+
+    config APP_SNTP_TIMEOUT_S
+        int "Seconds to wait for SNTP before falling back to the build timestamp"
+        default 90
+        range 10 3600
+        help
+            After this timeout the firmware sets the clock from its own
+            build date/time so TLS can start even when NTP is blocked.
+
     config APP_STATS_DEFAULT_ON
         bool "Anonymous statistics enabled by default (voluntary)"
         default n

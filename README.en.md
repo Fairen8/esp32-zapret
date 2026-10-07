@@ -111,8 +111,10 @@ Since v1.0.0 the device **detects the optimal operating parameters itself**:
   (Cloudflare/Google).
 
 Manual control: `/scan` re-runs the scan, `/strategy` shows the current strategy
-and probe statistics. Manual `/desync`, `/ttl`, `/fool` still work and take
-precedence until the next auto-scan.
+and probe statistics. Manual `/desync`, `/ttl`, `/fool` are persisted in NVS
+(survive reboot) and take precedence over auto-detection: health checks never
+reset them; they are cleared by `/scan` or after two failed checks in a row.
+`/status` shows whether the current settings are `manual` or `auto`.
 
 ## Anonymous statistics (voluntary)
 
@@ -141,6 +143,10 @@ idf.py menuconfig                          # Component config -> esp_desync anti
 idf.py build flash monitor
 ```
 
+> **Important:** `CFG_TG_ADMIN_ID=0` accepts commands from any chat — anyone
+> who finds the bot can wake the PC and change the bypass settings. Set your
+> numeric chat id (see @userinfobot); it is effectively the device password.
+
 Prebuilt images are available in
 [Releases](https://github.com/Fairen8/esp32-zapret/releases): merged images for
 **esp32**, **esp32s3**, **esp32c3** and a **no-bot** variant (`esp32-nobot`,
@@ -163,6 +169,14 @@ By default the helper expects the layout `D:\esp32-zapret\{esp-idf,python,tools,
 all paths can be overridden with `-IdfPath`, `-ToolsPath`, `-PythonDir`,
 `-WorkDir`, `-BuildDir`.
 
+### ESP32-C3 / ESP32-S3 console
+
+C3/S3 builds use the native **USB Serial/JTAG** console by default
+(`sdkconfig.defaults.esp32c3` / `sdkconfig.defaults.esp32s3`): connect the cable
+to the chip's own USB port — `idf.py monitor` will show the log. On boards with
+an external USB-UART bridge (CP210x/CH340) select
+`CONFIG_ESP_CONSOLE_UART_DEFAULT=y` in `menuconfig`.
+
 ## Bot commands
 
 ```
@@ -171,7 +185,7 @@ all paths can be overridden with `-IdfPath`, `-ToolsPath`, `-PythonDir`,
 /desync <mode>              off | split | disorder | fake | fake_split | tlsrec
 /ttl <1..255>               fake packet TTL
 /fool <mode>                ttl | md5sig | badsum | badseq | none
-/scan                       re-run strategy auto-detection
+/scan                       re-run strategy auto-detection (drops manual tuning)
 /strategy                   current strategy and probe statistics
 /stats on|off               anonymous statistics (off by default)
 ```

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <string.h>
+#include <stdlib.h>
 #include "desync_internal.h"
 #include "lwip/pbuf.h"
 #include "lwip/ip4.h"
@@ -134,39 +135,46 @@ int desync_inject_tcp(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
         return -1;
     }
 
-    inject_arg_t a;
-    memset(&a, 0, sizeof(a));
-    a.dst_ip = dst_ip;
-    a.src_port = src_port;
-    a.dst_port = dst_port;
-    a.seq = seq;
+    inject_arg_t *a = calloc(1, sizeof(*a));
+    if (a == NULL) {
+        return -1;
+    }
+    a->dst_ip = dst_ip;
+    a->src_port = src_port;
+    a->dst_port = dst_port;
+    a->seq = seq;
     if (fooling & ESP_DESYNC_FOOL_BADSEQ) {
-        a.seq = (uint32_t)(a.seq + (uint32_t)badseq_offset);
+        a->seq = (uint32_t)(a->seq + (uint32_t)badseq_offset);
     }
-    a.ack = ack;
-    a.ttl = (fooling & ESP_DESYNC_FOOL_TTL) ? ttl : 64;
-    a.md5sig = (fooling & ESP_DESYNC_FOOL_MD5SIG) != 0;
-    a.badsum = (fooling & ESP_DESYNC_FOOL_BADSUM) != 0;
-    a.datanoack = (fooling & ESP_DESYNC_FOOL_DATANOACK) != 0;
-    a.tcp_hlen = a.md5sig ? TCP_HLEN_MD5 : TCP_HLEN_BASE;
-    a.payload_len = (uint16_t)payload_len;
-    memcpy(a.payload, payload, payload_len);
+    a->ack = ack;
+    a->ttl = (fooling & ESP_DESYNC_FOOL_TTL) ? ttl : 64;
+    a->md5sig = (fooling & ESP_DESYNC_FOOL_MD5SIG) != 0;
+    a->badsum = (fooling & ESP_DESYNC_FOOL_BADSUM) != 0;
+    a->datanoack = (fooling & ESP_DESYNC_FOOL_DATANOACK) != 0;
+    a->tcp_hlen = a->md5sig ? TCP_HLEN_MD5 : TCP_HLEN_BASE;
+    a->payload_len = (uint16_t)payload_len;
+    memcpy(a->payload, payload, payload_len);
 
-    a.done = xSemaphoreCreateBinary();
-    if (a.done == NULL) {
+    a->done = xSemaphoreCreateBinary();
+    if (a->done == NULL) {
+        free(a);
         return -1;
     }
 
-    if (tcpip_callback(inject_cb, &a) != ERR_OK) {
-        vSemaphoreDelete(a.done);
+    if (tcpip_callback(inject_cb, a) != ERR_OK) {
+        vSemaphoreDelete(a->done);
+        free(a);
         return -1;
     }
 
-    if (xSemaphoreTake(a.done, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        /* Callback may still be queued; leak the semaphore on purpose. */
-        return -1;
-    }
-    vSemaphoreDelete(a.done);
+    /* The argument lives on the heap and is freed only after the callback
+     * signals completion. Waiting without a timeout is safe (the callback
+     * runs in the tcpip task, which this wait does not block) and rules out
+     * a use-after-free when the callback is queued for a long time. */
+    xSemaphoreTake(a->done, portMAX_DELAY);
 
-    return a.result;
+    int result = a->result;
+    vSemaphoreDelete(a->done);
+    free(a);
+    return result;
 }

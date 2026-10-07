@@ -50,11 +50,12 @@ int desync_pcb_get_state(uint16_t lport, uint16_t rport, uint32_t *snd_nxt, uint
         return -1;
     }
 
-    if (xSemaphoreTake(q.done, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        /* The callback may still be queued; leak the semaphore rather than
-         * risk a use-after-free. */
-        return -1;
-    }
+    /* The completion structure lives on this stack frame: wait without a
+     * timeout so the callback can never run after the frame is gone (a
+     * timeout + "leak the semaphore" still leaves the callback writing into
+     * released stack memory). The callback runs in the tcpip task, which
+     * this wait does not block. */
+    xSemaphoreTake(q.done, portMAX_DELAY);
     vSemaphoreDelete(q.done);
 
     if (!q.found) {

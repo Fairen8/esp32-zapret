@@ -5,7 +5,10 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define DESYNC_FAKE_MAX 512
+/* Max size of a fake ClientHello we build or re-inject. Modern ClientHellos
+ * (post-quantum key shares) exceed 1 KB, and the disorder mode re-injects the
+ * real hello's tail raw, so keep this comfortably above 1 KB. */
+#define DESYNC_FAKE_MAX 1536
 
 /* Find the SNI hostname inside a TLS ClientHello. Returns 0 on success and
  * fills sni_off/sni_len, -1 if the buffer is not a parseable ClientHello

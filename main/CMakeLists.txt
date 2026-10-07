@@ -28,6 +28,7 @@ idf_component_register(
         esp_event
         esp_netif
         esp_timer
+        esp_app_format
         mbedtls
 )
 

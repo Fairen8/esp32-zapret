@@ -12,7 +12,9 @@
 /* BotFather token, e.g. 123456789:AAH... */
 #define CFG_TG_TOKEN       "123456789:PUT_YOUR_TOKEN_HERE"
 
-/* 0 = accept commands from any chat, otherwise numeric chat id */
+/* Numeric chat id of the admin (check with @userinfobot).
+ * 0 = accept commands from ANY chat: anyone who finds the bot can wake the
+ * PC and change the bypass settings - use 0 only for a quick bench test. */
 #define CFG_TG_ADMIN_ID    0
 
 /* Telegram Bot API адреса (IP через запятую). Пусто -> встроенный список + DNS.

@@ -26,6 +26,10 @@ Edit `main/secrets.h`:
 - `CFG_WOL_MAC` — target PC MAC (`AA:BB:CC:DD:EE:FF`)
 - `CFG_TG_API_IPS` — optional Telegram endpoint IP list (comma-separated)
 
+> Keep `CFG_TG_ADMIN_ID` at 0 only for a quick bench test: anyone who finds
+> the bot can wake the PC and change the bypass settings. Use your numeric
+> chat id (see @userinfobot) — it is effectively the device password.
+
 ## 3. Build and flash
 
 ```bash
@@ -40,8 +44,10 @@ project to an ASCII path and builds there).
 
 By default the device auto-detects the optimal bypass at boot and re-checks it
 every 10 minutes. `/scan` re-runs the detection, `/strategy` shows the selected
-strategy and probe statistics. Manual `/desync`, `/ttl` and `/fool` remain
-available and take precedence until the next auto-scan.
+strategy and probe statistics. Manual `/desync`, `/ttl` and `/fool` take
+precedence over auto-detection, are persisted in NVS (survive reboot) and are
+cleared by `/scan` or after two failed health checks in a row; `/status` shows
+whether the current settings are `manual` or `auto`.
 
 Message the bot:
 
@@ -70,6 +76,11 @@ Build for another chip:
 idf.py set-target esp32s3   # or esp32c3
 idf.py build
 ```
+
+ESP32-C3/S3 builds use the native USB Serial/JTAG console by default
+(`sdkconfig.defaults.esp32c3` / `.esp32s3`): connect the cable to the chip's
+own USB port. On boards with an external USB-UART bridge, select
+`CONFIG_ESP_CONSOLE_UART_DEFAULT=y` in `menuconfig`.
 
 Disable the bot (self-test firmware):
 

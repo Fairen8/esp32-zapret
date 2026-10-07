@@ -163,7 +163,13 @@ static void test_build_fake(void)
     CHECK(fake[0] == 0x16);
     CHECK(fake[1] == 0x03);
     CHECK(fake[5] == 0x01);
-    CHECK((size_t)((fake[3] << 8) | fake[4]) + 5 == n);
+    size_t rec_len = (size_t)((fake[3] << 8) | fake[4]);
+    size_t hs_len = ((size_t)fake[6] << 16) | ((size_t)fake[7] << 8) | fake[8];
+    CHECK(rec_len + 5 == n);
+    /* The 3-byte handshake length covers the body only; writing the record
+     * length there (off by 4) makes strict DPIs drop the fake as malformed. */
+    CHECK(hs_len == rec_len - 4);
+    CHECK(hs_len + 4 + 5 == n);
 
     size_t so = 0;
     size_t sl = 0;

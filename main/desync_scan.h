@@ -6,6 +6,7 @@
 
 typedef struct {
     bool have;
+    bool manual;   /* true while /desync,/ttl,/fool user settings are in effect */
     char strategy[80];
     uint32_t scans;
     uint32_t probes;
@@ -17,11 +18,20 @@ typedef struct {
 void scan_init(void);
 
 /* Probes the saved strategy first, then scans the candidate list.
- * Returns 0 when a working strategy was found and saved. */
+ * Returns 0 when a working strategy was found and saved.
+ * Clears a manual override (explicit user re-scan). */
 int scan_find_working(void);
 
 /* Periodic health probe of the current strategy; re-scans after
- * CONFIG_APP_HEALTH_FAIL_THRESHOLD consecutive failures. */
+ * CONFIG_APP_HEALTH_FAIL_THRESHOLD consecutive failures.
+ * A manual override is probed as-is and only dropped after the same number
+ * of consecutive failures. */
 int scan_health_check(void);
+
+/* Marks (and persists) that the current desync config was set by hand:
+ * health checks then probe it without re-applying the saved auto strategy. */
+void scan_set_manual(bool on);
+
+bool scan_is_manual(void);
 
 void scan_get_status(scan_status_t *out);

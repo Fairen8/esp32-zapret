@@ -109,8 +109,10 @@ TCP MD5 option), `BADSUM` (не проходит через домашние NAT
   (Cloudflare/Google).
 
 Ручное управление: `/scan` — перезапустить перебор, `/strategy` — текущая
-стратегия и статистика. Ручные `/desync`, `/ttl`, `/fool` по-прежнему работают
-и имеют приоритет до следующего автоподбора.
+стратегия и статистика. Ручные `/desync`, `/ttl`, `/fool` сохраняются в NVS
+(переживают перезагрузку) и имеют приоритет над автоподбором: health-проверки
+не сбрасывают их, они снимаются только командой `/scan` или после двух неудачных
+проверок подряд. Текущий режим виден в `/status` (`manual`/`auto`).
 
 ## Анонимная статистика (по желанию)
 
@@ -139,6 +141,11 @@ idf.py menuconfig                          # Component config -> esp_desync anti
 idf.py build flash monitor
 ```
 
+> **Важно:** `CFG_TG_ADMIN_ID=0` означает «принимать команды от кого угодно» —
+> любой, кто узнает вашего бота, сможет будить ПК и менять настройки обхода.
+> Укажите свой числовой chat id (узнать: @userinfobot) — это фактически пароль
+> устройства.
+
 Готовые сборки — в [Releases](https://github.com/Fairen8/esp32-zapret/releases):
 merged-образы для **esp32**, **esp32s3**, **esp32c3** и вариант **без бота**
 (`esp32-nobot`, периодический TLS self-test через esp_desync), плюс архив с
@@ -162,6 +169,14 @@ powershell -ExecutionPolicy Bypass -File tools\win-build.ps1 -Action flash-monit
 
 Короткая инструкция для передачи проекта другому человеку — [INSTALL_RU.md](INSTALL_RU.md).
 
+### ESP32-C3 / ESP32-S3: консоль
+
+Для C3/S3 сборка использует нативный **USB Serial/JTAG** как основную консоль
+(`sdkconfig.defaults.esp32c3` / `sdkconfig.defaults.esp32s3`): подключайте кабель
+к USB-порту самого чипа — `idf.py monitor` покажет лог. На платах с внешним
+USB-UART-мостом (CP210x/CH340) верните `CONFIG_ESP_CONSOLE_UART_DEFAULT=y` в
+`menuconfig`.
+
 ## Команды бота
 
 ```
@@ -170,7 +185,7 @@ powershell -ExecutionPolicy Bypass -File tools\win-build.ps1 -Action flash-monit
 /desync <mode>              off | split | disorder | fake | fake_split | tlsrec
 /ttl <1..255>               TTL фейка
 /fool <mode>                ttl | md5sig | badsum | badseq | none
-/scan                       перезапустить автоподбор стратегии
+/scan                       перезапустить автоподбор (снимает ручные настройки)
 /strategy                   текущая стратегия и статистика проб
 /stats on|off               анонимная статистика (по умолчанию выключена)
 ```

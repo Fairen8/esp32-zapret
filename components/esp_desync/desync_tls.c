@@ -182,8 +182,9 @@ size_t desync_tls_build_fake(uint8_t *out, size_t out_sz, const char *sni,
     body[ext_len_pos] = (uint8_t)(ext_len >> 8);
     body[ext_len_pos + 1] = (uint8_t)(ext_len & 0xff);
 
-    size_t hs_len = p + 4;
-    if (out_sz < 5 + hs_len) {
+    size_t hs_len = p;        /* handshake body length (no 4-byte header) */
+    size_t rec_len = p + 4;   /* TLS record payload: handshake header + body */
+    if (out_sz < 5 + rec_len) {
         return 0;
     }
 
@@ -191,8 +192,8 @@ size_t desync_tls_build_fake(uint8_t *out, size_t out_sz, const char *sni,
     out[q++] = 0x16;
     out[q++] = 0x03;
     out[q++] = 0x01;
-    out[q++] = (uint8_t)(hs_len >> 8);
-    out[q++] = (uint8_t)(hs_len & 0xff);
+    out[q++] = (uint8_t)(rec_len >> 8);
+    out[q++] = (uint8_t)(rec_len & 0xff);
     out[q++] = 0x01;
     out[q++] = (uint8_t)(hs_len >> 16);
     out[q++] = (uint8_t)(hs_len >> 8);
