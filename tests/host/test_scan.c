@@ -35,7 +35,7 @@ int main(void)
 
     /* Candidate sanity. */
     for (int i = 0; i < n; i++) {
-        CHECK(c[i].mode <= ESP_DESYNC_MODE_TLSREC);
+        CHECK(c[i].mode <= ESP_DESYNC_MODE_SEQOVL);
         if (c[i].mode != ESP_DESYNC_MODE_OFF) {
             CHECK(c[i].sni[0] != 0);
             CHECK(strlen(c[i].sni) < SCAN_SNI_MAX);
@@ -47,6 +47,7 @@ int main(void)
     bool split = false;
     bool tlsrec = false;
     bool rndsni = false;
+    bool seqovl = false;
     for (int i = 0; i < n; i++) {
         if (strcmp(c[i].sni, "www.yandex.ru") == 0) {
             yandex = true;
@@ -56,6 +57,9 @@ int main(void)
         }
         if (c[i].mode == ESP_DESYNC_MODE_TLSREC) {
             tlsrec = true;
+        }
+        if (c[i].mode == ESP_DESYNC_MODE_SEQOVL) {
+            seqovl = true;
         }
         if (c[i].rndsni) {
             rndsni = true;
@@ -68,6 +72,7 @@ int main(void)
     CHECK(split);
     CHECK(tlsrec);
     CHECK(rndsni);
+    CHECK(seqovl);
 
     /* Formatting. */
     char buf[96];

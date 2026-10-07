@@ -70,6 +70,7 @@ static const esp_desync_config_t s_default = {
     .repeats = CONFIG_ESP_DESYNC_FAKE_REPEATS,
     .rndsni = false,
     .multi_sni = false,
+    .seqovl_len = CONFIG_ESP_DESYNC_SEQOVL_LEN,
 };
 
 static esp_desync_config_t s_cfg;
@@ -251,6 +252,33 @@ static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
         return send_seg(fd, hello, len, p1, p2, c->op_delay_ms);
     }
 
+    case ESP_DESYNC_MODE_SEQOVL: {
+        uint8_t fake[DESYNC_FAKE_MAX];
+        char rnd_sni[32];
+        uint32_t snd = 0;
+        uint32_t rcv = 0;
+        if (desync_pcb_get_state(s_flow.src_port, s_flow.dst_port, &snd, &rcv) != 0) {
+            ESP_LOGW(TAG, "no PCB state for seqovl, sending plain");
+        } else {
+            const char *sni = c->fake_sni;
+            if (c->rndsni && desync_tls_random_sni(rnd_sni, sizeof(rnd_sni)) > 0) {
+                sni = rnd_sni;
+            }
+            size_t fl = desync_tls_build_fake(fake, sizeof(fake), sni, hello, len, true);
+            uint16_t overlap = c->seqovl_len > 0 ? (uint16_t)c->seqovl_len : 32;
+            if (fl > 0 && desync_inject_tcp(s_flow.dst_ip, s_flow.src_port, s_flow.dst_port,
+                                            snd - overlap, rcv, fake, fl, c->fooling,
+                                            c->fake_ttl, c->badseq_offset) == 0) {
+                ESP_LOGI(TAG, "seqovl fake sent: overlap=%u sni=%s len=%u fool=0x%x",
+                         (unsigned)overlap, sni, (unsigned)fl, (unsigned)c->fooling);
+            }
+            if (c->op_delay_ms) {
+                vTaskDelay(pdMS_TO_TICKS(c->op_delay_ms));
+            }
+        }
+        return send_all(fd, hello, len);
+    }
+
     case ESP_DESYNC_MODE_DISORDER: {
         uint32_t snd = 0;
         uint32_t rcv = 0;
@@ -310,7 +338,7 @@ void esp_desync_set_config(const esp_desync_config_t *cfg)
         return;
     }
     esp_desync_config_t c = *cfg;
-    if ((int)c.mode < 0 || c.mode > ESP_DESYNC_MODE_TLSREC) {
+    if ((int)c.mode < 0 || c.mode > ESP_DESYNC_MODE_SEQOVL) {
         c.mode = s_cfg.mode;
     }
     if (c.fake_sni == NULL) {
@@ -521,6 +549,7 @@ const char *esp_desync_mode_name(esp_desync_mode_t mode)
     case ESP_DESYNC_MODE_FAKE: return "fake";
     case ESP_DESYNC_MODE_FAKE_SPLIT: return "fake_split";
     case ESP_DESYNC_MODE_TLSREC: return "tlsrec";
+    case ESP_DESYNC_MODE_SEQOVL: return "seqovl";
     default: return "?";
     }
 }
@@ -542,6 +571,7 @@ esp_desync_mode_t esp_desync_mode_from_name(const char *name, bool *ok)
     if (strcmp(name, "fake") == 0) return ESP_DESYNC_MODE_FAKE;
     if (strcmp(name, "fake_split") == 0) return ESP_DESYNC_MODE_FAKE_SPLIT;
     if (strcmp(name, "tlsrec") == 0) return ESP_DESYNC_MODE_TLSREC;
+    if (strcmp(name, "seqovl") == 0) return ESP_DESYNC_MODE_SEQOVL;
     if (ok) {
         *ok = false;
     }

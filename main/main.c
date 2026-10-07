@@ -306,10 +306,10 @@ static void handle_update(const tg_update_t *u)
                 scan_set_manual(true);
                 snprintf(reply, sizeof(reply), "desync mode: %s (manual)", esp_desync_mode_name(m));
             } else {
-                snprintf(reply, sizeof(reply), "unknown mode, use: off split disorder fake fake_split tlsrec");
+                snprintf(reply, sizeof(reply), "unknown mode, use: off split disorder fake fake_split tlsrec seqovl");
             }
         } else {
-            snprintf(reply, sizeof(reply), "usage: /desync <off|split|disorder|fake|fake_split|tlsrec>");
+            snprintf(reply, sizeof(reply), "usage: /desync <off|split|disorder|fake|fake_split|tlsrec|seqovl>");
         }
         tg_send_message(u->chat_id, reply);
 
@@ -338,6 +338,7 @@ static void handle_update(const tg_update_t *u)
         else if (strcmp(name, "md5sig") == 0) f = ESP_DESYNC_FOOL_MD5SIG;
         else if (strcmp(name, "badsum") == 0) f = ESP_DESYNC_FOOL_BADSUM;
         else if (strcmp(name, "badseq") == 0) f = ESP_DESYNC_FOOL_BADSEQ;
+        else if (strcmp(name, "ts") == 0) f = ESP_DESYNC_FOOL_TS;
         else if (strcmp(name, "none") == 0) f = ESP_DESYNC_FOOL_NONE;
         else ok = false;
 
@@ -349,7 +350,7 @@ static void handle_update(const tg_update_t *u)
             scan_set_manual(true);
             snprintf(reply, sizeof(reply), "fooling: %s (manual)", name[0] ? name : "ttl");
         } else {
-            snprintf(reply, sizeof(reply), "usage: /fool ttl|md5sig|badsum|badseq|none");
+            snprintf(reply, sizeof(reply), "usage: /fool ttl|md5sig|badsum|badseq|datanoack|ts|none");
         }
         tg_send_message(u->chat_id, reply);
 
@@ -463,9 +464,9 @@ static void handle_update(const tg_update_t *u)
                         "esp32-zapret\n"
                         "/wake [mac] - send Wake-on-LAN magic packet\n"
                         "/status - device state\n"
-                        "/desync <mode> - off|split|disorder|fake|fake_split|tlsrec\n"
+                        "/desync <mode> - off|split|disorder|fake|fake_split|tlsrec|seqovl\n"
                         "/ttl <n> - fake packet TTL (tune 3..8)\n"
-                        "/fool <mode> - ttl|md5sig|badsum|badseq|none\n"
+                        "/fool <mode> - ttl|md5sig|badsum|badseq|datanoack|ts|none\n"
                         "/rndsni on|off - random decoy SNI for every fake\n"
                         "/heap - free/min/largest heap block\n"
                         "/ip - current IP, gateway, SSID and RSSI\n"

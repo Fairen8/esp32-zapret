@@ -62,7 +62,13 @@ int scan_build_candidates(scan_candidate_t *out, int max)
     n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_BADSEQ, 64, DECOYS[0], false);
     n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_DATANOACK, 64, DECOYS[0], false);
 
-    /* 6) no-fake methods */
+    /* 6) seqovl (fake overlapped into the stream head) and TCP timestamps */
+    n = add(out, n, max, ESP_DESYNC_MODE_SEQOVL, ESP_DESYNC_FOOL_TTL, 5, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_SEQOVL, ESP_DESYNC_FOOL_MD5SIG, 64, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE_SPLIT, ESP_DESYNC_FOOL_TS, 64, DECOYS[0], false);
+    n = add(out, n, max, ESP_DESYNC_MODE_FAKE, ESP_DESYNC_FOOL_TS, 64, DECOYS[0], false);
+
+    /* 7) no-fake methods */
     n = add(out, n, max, ESP_DESYNC_MODE_SPLIT, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0], false);
     n = add(out, n, max, ESP_DESYNC_MODE_DISORDER, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0], false);
     n = add(out, n, max, ESP_DESYNC_MODE_TLSREC, ESP_DESYNC_FOOL_NONE, 64, DECOYS[0], false);
@@ -79,6 +85,7 @@ static const char *mode_name(esp_desync_mode_t mode)
     case ESP_DESYNC_MODE_FAKE: return "fake";
     case ESP_DESYNC_MODE_FAKE_SPLIT: return "fake_split";
     case ESP_DESYNC_MODE_TLSREC: return "tlsrec";
+    case ESP_DESYNC_MODE_SEQOVL: return "seqovl";
     default: return "?";
     }
 }
@@ -87,6 +94,7 @@ static const char *fool_name(uint32_t fooling)
 {
     if (fooling & ESP_DESYNC_FOOL_TTL) return "ttl";
     if (fooling & ESP_DESYNC_FOOL_MD5SIG) return "md5sig";
+    if (fooling & ESP_DESYNC_FOOL_TS) return "ts";
     if (fooling & ESP_DESYNC_FOOL_BADSUM) return "badsum";
     if (fooling & ESP_DESYNC_FOOL_BADSEQ) return "badseq";
     if (fooling & ESP_DESYNC_FOOL_DATANOACK) return "datanoack";

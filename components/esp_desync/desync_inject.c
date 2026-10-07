@@ -12,8 +12,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#define TCP_HLEN_BASE 20
-#define TCP_HLEN_MD5  40
+#define TCP_HLEN_BASE   20
+#define TCP_OPT_MD5_LEN 20
+#define TCP_OPT_TS_LEN  12
 
 static uint32_t cksum_add(const uint8_t *d, size_t len, uint32_t sum)
 {
@@ -48,6 +49,7 @@ typedef struct {
     bool md5sig;
     bool badsum;
     bool datanoack;
+    bool ts;
     uint16_t payload_len;
     uint8_t payload[DESYNC_FAKE_MAX];
     uint8_t seg[DESYNC_SEG_MAX];
@@ -97,6 +99,23 @@ static void inject_cb(void *arg)
         }
         seg[38] = 1;
         seg[39] = 1;
+    }
+
+    uint16_t opt = TCP_HLEN_BASE + (a->md5sig ? TCP_OPT_MD5_LEN : 0);
+    if (a->ts) {
+        seg[opt + 0] = 8;  /* TCP option: timestamps */
+        seg[opt + 1] = 10;
+        uint32_t tsval = esp_random();
+        seg[opt + 2] = (uint8_t)(tsval >> 24);
+        seg[opt + 3] = (uint8_t)(tsval >> 16);
+        seg[opt + 4] = (uint8_t)(tsval >> 8);
+        seg[opt + 5] = (uint8_t)(tsval & 0xff);
+        seg[opt + 6] = (uint8_t)(a->ack >> 24);
+        seg[opt + 7] = (uint8_t)(a->ack >> 16);
+        seg[opt + 8] = (uint8_t)(a->ack >> 8);
+        seg[opt + 9] = (uint8_t)(a->ack & 0xff);
+        seg[opt + 10] = 1; /* NOP padding to a 4-byte boundary */
+        seg[opt + 11] = 1;
     }
 
     memcpy(seg + hlen, a->payload, a->payload_len);
@@ -151,7 +170,9 @@ int desync_inject_tcp(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
     a->md5sig = (fooling & ESP_DESYNC_FOOL_MD5SIG) != 0;
     a->badsum = (fooling & ESP_DESYNC_FOOL_BADSUM) != 0;
     a->datanoack = (fooling & ESP_DESYNC_FOOL_DATANOACK) != 0;
-    a->tcp_hlen = a->md5sig ? TCP_HLEN_MD5 : TCP_HLEN_BASE;
+    a->ts = (fooling & ESP_DESYNC_FOOL_TS) != 0;
+    a->tcp_hlen = TCP_HLEN_BASE + (a->md5sig ? TCP_OPT_MD5_LEN : 0) +
+                  (a->ts ? TCP_OPT_TS_LEN : 0);
     a->payload_len = (uint16_t)payload_len;
     memcpy(a->payload, payload, payload_len);
 
