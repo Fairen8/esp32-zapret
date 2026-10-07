@@ -9,7 +9,10 @@ string(STRIP "${_fw_version}" _fw_version)
 idf_component_register(
     SRCS
         "main.c"
+        "app_settings.c"
         "desync_scan.c"
+        "setup_mode.c"
+        "webui.c"
         "doh.c"
         "doh_parse.c"
         "https_client.c"
@@ -29,6 +32,9 @@ idf_component_register(
         esp_netif
         esp_timer
         esp_app_format
+        esp_http_server
+        console
+        json
         mbedtls
 )
 

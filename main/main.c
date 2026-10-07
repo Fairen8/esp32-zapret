@@ -20,6 +20,9 @@
 #include "esp_desync.h"
 #include "desync_scan.h"
 #include "app_config.h"
+#include "app_settings.h"
+#include "setup_mode.h"
+#include "webui.h"
 #include "stats.h"
 #include "telegram.h"
 #include "wol.h"
@@ -186,7 +189,9 @@ static const char *cmd_args(const char *text, const char *name)
 
 static void handle_update(const tg_update_t *u)
 {
-    if (CFG_TG_ADMIN_ID != 0 && u->chat_id != (int64_t)CFG_TG_ADMIN_ID) {
+    const app_settings_t *settings = app_settings_get();
+
+    if (settings->tg_admin_id != 0 && u->chat_id != settings->tg_admin_id) {
         tg_send_message(u->chat_id, "access denied");
         return;
     }
@@ -196,11 +201,12 @@ static void handle_update(const tg_update_t *u)
     const char *args;
 
     if ((args = cmd_args(text, "wake")) != NULL || (args = cmd_args(text, "wol")) != NULL) {
-        char macbuf[24] = CFG_WOL_MAC;
+        char macbuf[24];
+        strlcpy(macbuf, settings->wol_mac, sizeof(macbuf));
         if (args[0]) {
             copy_token(args, macbuf, sizeof(macbuf));
         }
-        if (wol_send(macbuf, CFG_WOL_BROADCAST, CFG_WOL_PORT) == 0) {
+        if (wol_send(macbuf, settings->wol_broadcast, settings->wol_port) == 0) {
             snprintf(reply, sizeof(reply), "magic packet sent to %s", macbuf);
         } else {
             snprintf(reply, sizeof(reply), "WoL failed, bad MAC? %s", macbuf);
@@ -350,9 +356,17 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(app_settings_init());
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* Prebuilt firmware has placeholder credentials: instead of hanging,
+     * run first-boot provisioning (setup AP + web UI + serial console). */
+    if (!app_settings_is_provisioned()) {
+        setup_mode_run(); /* never returns */
+    }
+
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -368,8 +382,9 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
 
     wifi_config_t sta = {0};
-    strlcpy((char *)sta.sta.ssid, CFG_WIFI_SSID, sizeof(sta.sta.ssid));
-    strlcpy((char *)sta.sta.password, CFG_WIFI_PASS, sizeof(sta.sta.password));
+    const app_settings_t *settings = app_settings_get();
+    strlcpy((char *)sta.sta.ssid, settings->wifi_ssid, sizeof(sta.sta.ssid));
+    strlcpy((char *)sta.sta.password, settings->wifi_pass, sizeof(sta.sta.password));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta));
@@ -416,6 +431,12 @@ void app_main(void)
     ESP_LOGI(TAG, "auto-detecting optimal desync strategy...");
     if (scan_find_working() != 0) {
         ESP_LOGW(TAG, "no working strategy detected yet; will retry periodically");
+    }
+#endif
+
+#if CONFIG_APP_WEB_UI
+    if (webui_start(false) != ESP_OK) {
+        ESP_LOGW(TAG, "web UI unavailable");
     }
 #endif
 

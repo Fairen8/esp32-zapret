@@ -246,6 +246,21 @@ int scan_health_check(void)
     return -1;
 }
 
+void scan_erase_saved(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_key(h, NVS_KEY);
+        nvs_erase_key(h, NVS_KEY_MANUAL);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    memset(&s_current, 0, sizeof(s_current));
+    s_have = false;
+    s_manual = false;
+    s_fail_streak = 0;
+}
+
 void scan_get_status(scan_status_t *out)
 {
     if (out == NULL) {

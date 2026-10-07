@@ -34,4 +34,7 @@ void scan_set_manual(bool on);
 
 bool scan_is_manual(void);
 
+/* Drops the saved strategy and any manual override (factory reset). */
+void scan_erase_saved(void);
+
 void scan_get_status(scan_status_t *out);

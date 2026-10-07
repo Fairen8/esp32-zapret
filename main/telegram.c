@@ -10,6 +10,7 @@
 #include "net_utils.h"
 #include "telegram.h"
 #include "app_config.h"
+#include "app_settings.h"
 #if CONFIG_APP_DOH_FALLBACK
 #include "doh.h"
 #endif
@@ -201,10 +202,11 @@ static void json_parse_text(const char *resp, char *out, size_t out_sz)
 
 int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
 {
+    const app_settings_t *settings = app_settings_get();
     char path[256];
     snprintf(path, sizeof(path),
              "/bot%s/getUpdates?timeout=%d&offset=%lld",
-             CFG_TG_TOKEN, long_poll_s, (long long)offset);
+             settings->tg_token, long_poll_s, (long long)offset);
 
     int status = 0;
     int n = tg_http_get(path, s_resp, sizeof(s_resp), long_poll_s * 1000 + 20000, &status);
@@ -240,6 +242,7 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
 
 int tg_send_message(int64_t chat_id, const char *text)
 {
+    const app_settings_t *settings = app_settings_get();
     static char resp[2048];
     char enc[1024];
     char path[1536];
@@ -248,7 +251,7 @@ int tg_send_message(int64_t chat_id, const char *text)
     net_url_encode(text, enc, sizeof(enc));
     snprintf(path, sizeof(path),
              "/bot%s/sendMessage?chat_id=%lld&text=%s",
-             CFG_TG_TOKEN, (long long)chat_id, enc);
+             settings->tg_token, (long long)chat_id, enc);
 
     int n = tg_http_get(path, resp, sizeof(resp), 20000, &status);
     if (n > 0 && status != 200) {
