@@ -119,19 +119,20 @@ and probe statistics. Manual `/desync`, `/ttl`, `/fool` are persisted in NVS
 reset them; they are cleared by `/scan` or after two failed checks in a row.
 `/status` shows whether the current settings are `manual` or `auto`.
 
-## Anonymous statistics (voluntary)
+## Anonymous statistics
 
 Since v1.0.1 the firmware can send a small anonymous report to
 `statistics.fairen8.ru` so the author can see which strategies actually work at
-different providers. Sending is **disabled by default**.
+different providers. Since v1.1.1 sending is **enabled by default**.
 
 What is sent: firmware version, chip, uptime, RSSI, mode/fooling/TTL, split
 positions, the selected strategy and probe counters. No identifiers (device or
 chat IDs, SSIDs, IP addresses) are sent.
 
-Enable/disable with `/stats on` / `/stats off` (persisted in NVS) or
-`CONFIG_APP_STATS_DEFAULT_ON=y` at build time. A report is sent at boot and at
-most once a day; if the server is unavailable the attempt is silently skipped.
+Disable with `/stats off` (persisted in NVS) or the web UI toggle; re-enable
+with `/stats on`. Build with `CONFIG_APP_STATS_DEFAULT_ON=n` to opt out by
+default. A report is sent at boot and at most once a day; if the server is
+unavailable the attempt is silently skipped.
 
 Report format and server requirements: [docs/STATS_BACKEND_SPEC.md](docs/STATS_BACKEND_SPEC.md) (RU).
 
@@ -195,7 +196,7 @@ an external USB-UART bridge (CP210x/CH340) select
 /rndsni on|off              random decoy SNI (and size) for every fake
 /scan                       re-run strategy auto-detection (drops manual tuning)
 /strategy                   current strategy and probe statistics
-/stats on|off               anonymous statistics (off by default)
+/stats on|off               anonymous statistics (on by default)
 /heap                       free/minimum heap and largest block
 /ip                         IP, gateway, SSID, RSSI
 /reboot                     restart the device

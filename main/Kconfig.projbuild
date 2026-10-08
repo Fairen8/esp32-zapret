@@ -74,16 +74,17 @@ menu "esp32-zapret application"
         default "esp32-zapret"
 
     config APP_STATS_DEFAULT_ON
-        bool "Anonymous statistics enabled by default (voluntary)"
-        default n
+        bool "Anonymous statistics enabled by default (opt-out)"
+        default y
         help
             Sends a small anonymous report (firmware version, chip, uptime,
             heap, RSSI, selected bypass strategy and its counters) to
             statistics.fairen8.ru.
 
             No identifiers are sent: no device or chat IDs, no SSIDs, no IP
-            addresses. Disabled by default; can be toggled at runtime with the
-            /stats bot command. Reports are best-effort and failures are never
+            addresses. Enabled by default; can be disabled at runtime with the
+            /stats bot command or in the web UI, or at build time by setting
+            this option to n. Reports are best-effort and failures are never
             reported to the user.
 
     config APP_STATS_INTERVAL_S
