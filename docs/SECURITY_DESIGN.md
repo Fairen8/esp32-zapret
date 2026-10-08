@@ -45,9 +45,12 @@ model, secure design principles and input handling.
   same certificate-verified TLS stack as normal operation.
 - **Anonymous telemetry, on by default.** Anonymous statistics are enabled by
   default (opt-out via `/stats off`, the web UI toggle, or
-  `APP_STATS_DEFAULT_ON=n` at build time) and carry no
-  identifiers (no device/chat IDs, no SSIDs, no IP addresses); reports use the
-  same verified TLS stack and are silently skipped when unavailable.
+  `APP_STATS_DEFAULT_ON=n` at build time). The schema-2 report carries
+  diagnostics (tried strategies, heap/Wi-Fi/error counters, config) but no
+  stable identifiers: no device/chat IDs, no SSIDs, no IP addresses. The `rid`
+  pseudonym is HMAC of a device-local secret and the current UTC day and cannot
+  be linked across days. Reports use the same verified TLS stack and are
+  silently skipped when unavailable.
 
 ## Input validation
 

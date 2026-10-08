@@ -38,6 +38,7 @@ static volatile bool s_connected;
 static esp_timer_handle_t s_reconnect_timer;
 static esp_timer_handle_t s_dhcp_timer;
 static int s_disconnects;
+static int64_t s_sntp_start_us;
 static wifi_config_t s_sta_cfg;
 
 static void sntp_start(void);
@@ -67,6 +68,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             esp_timer_start_once(s_dhcp_timer, 15 * 1000 * 1000);
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *e = (wifi_event_sta_disconnected_t *)data;
+        stats_anon_note_wifi_disconnect(e->reason);
         s_connected = false;
         if (s_dhcp_timer != NULL) {
             esp_timer_stop(s_dhcp_timer);
@@ -104,6 +107,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK &&
             esp_wifi_get_channel(&channel, &second) == ESP_OK) {
             app_settings_set_bssid(ap.bssid, channel);
+        }
+        if (s_sntp_start_us == 0) {
+            s_sntp_start_us = esp_timer_get_time();
         }
         sntp_start();
     }
@@ -593,6 +599,11 @@ void app_main(void)
             last_warn_us = now;
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    if (s_sntp_start_us > 0) {
+        stats_anon_note_sntp((uint16_t)((esp_timer_get_time() - s_sntp_start_us) / 1000000),
+                             !fallback_done);
     }
 
     scan_init();

@@ -7,6 +7,14 @@
 
 static const char *TAG = "doh";
 
+/* Telemetry flags: bit0 = attempted, bit1 = succeeded (see doh.h). */
+static uint8_t s_telemetry;
+
+uint8_t doh_get_flags(void)
+{
+    return s_telemetry;
+}
+
 typedef struct {
     const char *sni;  /* TLS hostname / Host header */
     uint32_t ip_be;   /* network byte order */
@@ -22,6 +30,7 @@ int doh_resolve(const char *host, uint32_t *addrs_be, int max_addrs)
     static char resp[2048];
     char path[192];
 
+    s_telemetry |= DOH_FLAG_TRIED;
     snprintf(path, sizeof(path), "/dns-query?name=%s&type=A", host);
 
     for (size_t i = 0; i < sizeof(DOH_SERVERS) / sizeof(DOH_SERVERS[0]); i++) {
@@ -38,6 +47,7 @@ int doh_resolve(const char *host, uint32_t *addrs_be, int max_addrs)
         if (n > 0 && status == 200) {
             int cnt = doh_parse_a_records(resp, addrs_be, max_addrs);
             if (cnt > 0) {
+                s_telemetry |= DOH_FLAG_OK;
                 ESP_LOGI(TAG, "%s -> %d address(es)", srv->sni, cnt);
                 return cnt;
             }

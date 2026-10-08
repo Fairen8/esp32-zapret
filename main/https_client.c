@@ -12,6 +12,7 @@
 #include "esp_desync.h"
 #include "net_utils.h"
 #include "fw_version.h"
+#include "stats.h"
 #include "https_client.h"
 
 static const char *TAG = "https";
@@ -45,10 +46,15 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len)
     return (int)n;
 }
 
-int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int n_ips,
-                  uint16_t port, int connect_timeout_ms, int handshake_timeout_ms,
-                  bool dns_fallback)
+int https_connect_ex(https_conn_t *c, const char *host, const uint32_t *ips_be, int n_ips,
+                     uint16_t port, int connect_timeout_ms, int handshake_timeout_ms,
+                     bool dns_fallback, int *fail_stage)
 {
+    int stage = HTTPS_STAGE_TLS;
+    if (fail_stage) {
+        *fail_stage = HTTPS_STAGE_OK;
+    }
+
     memset(c, 0, sizeof(*c));
     c->fd = -1;
     strlcpy(c->host, host, sizeof(c->host));
@@ -94,6 +100,8 @@ int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int
     }
     if (c->fd < 0) {
         ESP_LOGW(TAG, "tcp connect failed: %s", host);
+        stage = HTTPS_STAGE_TCP;
+        stats_anon_note_err(0x0001);
         goto fail;
     }
 
@@ -108,18 +116,34 @@ int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
             if (esp_timer_get_time() > deadline) {
                 ESP_LOGW(TAG, "handshake timeout via %s", c->endpoint);
+                stage = HTTPS_STAGE_TIMEOUT;
+                stats_anon_note_err(0x0002);
                 goto fail;
             }
             continue;
         }
         ESP_LOGW(TAG, "handshake failed via %s: -0x%04x", c->endpoint, (unsigned)-ret);
+        stage = (ret == MBEDTLS_ERR_NET_RECV_FAILED || ret == MBEDTLS_ERR_NET_CONN_RESET)
+                    ? HTTPS_STAGE_RST : HTTPS_STAGE_TLS;
+        stats_anon_note_err((uint16_t)(-ret));
         goto fail;
     }
     return 0;
 
 fail:
+    if (fail_stage) {
+        *fail_stage = stage;
+    }
     https_close(c);
     return -1;
+}
+
+int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int n_ips,
+                  uint16_t port, int connect_timeout_ms, int handshake_timeout_ms,
+                  bool dns_fallback)
+{
+    return https_connect_ex(c, host, ips_be, n_ips, port, connect_timeout_ms,
+                            handshake_timeout_ms, dns_fallback, NULL);
 }
 
 static int parse_http_status(const char *r)

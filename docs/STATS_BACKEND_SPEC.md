@@ -9,8 +9,15 @@
 - Отправка **включена по умолчанию** (начиная с v1.1.1). Выключается командой
   `/stats off` (флаг в NVS), тумблером в веб-UI или сборкой с
   `CONFIG_APP_STATS_DEFAULT_ON=n`.
-- Отчёт — анонимный: в payload **нет** идентификаторов (ни ID устройства или
-  чата, ни SSID, ни IP-адресов, ни токенов).
+- Отчёт — анонимный: в payload **нет** стабильных идентификаторов (ни ID
+  устройства или чата, ни SSID, ни IP-адресов, ни токенов). Единственный
+  псевдоним — `rid`: HMAC(локальный секрет, текущий день), ротируется каждые
+  сутки; связать устройства между днями без локального секрета нельзя (см. §3).
+- Начиная с v1.2.0 payload расширен диагностикой (schema 2): `tried`,
+  `tts_s`, `strategy_changed`, `min_heap`, `max_block`, `wifi_disc`,
+  `wifi_reason`, `boot_storm`, `temp_c`, `errs`, `mtu`, `sntp_s`, `sntp_ok`,
+  `doh`, `ch`, `stage`, `cfg`, `cpu_mhz`, `flash_free`, `psram`, `chip_rev`,
+  `sni_cat`, `rid`.
 - Устройство не показывает пользователю ошибки отправки: любая неудача молча
   игнорируется (в лог уровня debug).
 - Устройство не отправляет время: сервер обязан сам ставить timestamp
@@ -26,7 +33,7 @@
 | `Content-Type` | `application/json` |
 | `User-Agent` | `esp32-zapret/<версия>`, напр. `esp32-zapret/1.0.1` |
 | `Accept` | `application/json` |
-| Размер тела | ~300–400 байт (буфер устройства 512 байт) |
+| Размер тела | ~600–800 байт (буфер устройства 1024 байта; серверный лимит 1 КБ) |
 | Таймаут ответа | 8 секунд; TLS-handshake — 6 с; TCP — 2,5 с на адрес |
 
 Обязательно:
@@ -49,29 +56,40 @@
 Если сервер ответит 4xx/5xx, таймаут (>8 c) или оборвёт соединение — отчёт
 считается недоставленным, устройство молча повторит его в следующий период.
 
-## 3. Формат отчёта (schema = 1)
+## 3. Формат отчёта (schema = 2)
 
 Плоский JSON-объект. Все поля присутствуют всегда. Порядок полей не важен, но
 устройство шлёт их именно так:
 
 ```json
-{"schema":1,"event":"boot","fw":"1.0.1","target":"esp32","uptime_s":47,
- "heap":214512,"rssi":-63,"reset":1,"mode":4,"fool":1,"ttl":5,
- "split1":-1,"split2":-1,"have":true,
- "strategy":"fake_split fool=ttl ttl=5 sni=www.iana.org",
- "scans":1,"probes":2,"fails":1}
+{"schema":2,"event":"boot","fw":"1.2.0","target":"esp32","uptime_s":47,
+ "heap":214512,"min_heap":198032,"max_block":110592,"rssi":-63,"reset":1,
+ "mode":5,"fool":1,"ttl":5,"split1":-1,"split2":-1,"have":true,
+ "strategy":"seqovl fool=ttl ttl=5 sni=www.iana.org",
+ "scans":1,"probes":4,"fails":3,"tried":"4:1,1:0,2:9",
+ "tts_s":6,"strategy_changed":1,"wifi_disc":0,"wifi_reason":0,
+ "boot_storm":false,"temp_c":52,"errs":"0x6a80:3",
+ "mtu":1500,"sntp_s":3,"sntp_ok":true,"doh":0,"ch":6,"stage":0,"cfg":15,
+ "cpu_mhz":160,"flash_free":630784,"psram":false,"chip_rev":301,
+ "sni_cat":1,"rid":"9f2c41d0ab77e153"}
 ```
+
+`schema` = 1 (прошивки ≤ 1.1.x) содержит только поля до `fails` включительно;
+schema 2 добавляет диагностические поля после `fails`. Бэкенд обязан
+принимать обе схемы и игнорировать неизвестные поля.
 
 ### Поля
 
 | Поле | Тип | Значение |
 |---|---|---|
-| `schema` | int | Версия схемы. Сейчас всегда `1`. При несовместимом изменении — инкремент. |
+| `schema` | int | Версия схемы: `1` (≤1.1.x) или `2` (≥1.2.0). |
 | `event` | string | `"boot"` — первый отчёт после загрузки; `"periodic"` — ежедневный; `"manual"` — сразу после `/stats on`. |
-| `fw` | string | Версия прошивки, из файла `VERSION` (например `"1.0.1"`). |
+| `fw` | string | Версия прошивки, из файла `VERSION` (например `"1.2.0"`). |
 | `target` | string | Чип: `"esp32"`, `"esp32s3"`, `"esp32c3"`. |
 | `uptime_s` | uint32 | Секунды с момента загрузки. |
 | `heap` | uint32 | Свободная heap, байт. |
+| `min_heap` | uint32 | Минимальный свободный heap с загрузки (водяная метка). |
+| `max_block` | uint32 | Крупнейший свободный блок heap, байт (фрагментация). |
 | `rssi` | int | Уровень Wi-Fi, dBm, обычно −30…−90. `0`, если информация недоступна. |
 | `reset` | uint8 | Причина перезагрузки (см. таблицу ниже). |
 | `mode` | uint8 | Режим обхода (см. таблицу ниже). Отражает конфиг на момент отправки. |
@@ -80,10 +98,31 @@
 | `split1` | int16 | Позиция первого сплита, `-1` = автоматически. |
 | `split2` | int16 | Позиция второго сплита, `-1` = автоматически (середина SNI). |
 | `have` | bool | Найдена ли рабочая стратегия (`true`/`false`). |
-| `strategy` | string | Человекочитаемое описание стратегии, ≤80 символов; `""` если `have=false`. Примеры: `"off"`, `"split"`, `"fake_split fool=ttl ttl=5 sni=www.iana.org"`, `"fake fool=md5sig ttl=64 sni=www.iana.org"`. |
+| `strategy` | string | Человекочитаемое описание стратегии, ≤80 символов; `""` если `have=false`. Примеры: `"off"`, `"split"`, `"fake_split fool=ttl ttl=5 sni=www.iana.org"`. |
 | `scans` | uint32 | Переборов стратегий с момента загрузки. |
 | `probes` | uint32 | Всего проб TLS с момента загрузки. |
 | `fails` | uint32 | Неудачных проб с момента загрузки. |
+| `tried` | string | Опробованные до успеха кандидаты в формате `"mode:fool,mode:fool,..."` (mode и fool — числа из таблиц ниже). `""` если не было неудачных проб. Обрезается до 47 символов. |
+| `tts_s` | uint16 | Секунды от старта подбора до рабочей стратегии; `65535` = стратегия не найдена. |
+| `strategy_changed` | uint16 | Сколько раз стратегия менялась за загрузку (автосмена + ручные `/desync`,`/ttl`,`/fool`). |
+| `wifi_disc` | uint32 | Отключений Wi-Fi с момента загрузки. |
+| `wifi_reason` | uint8 | Код причины последнего отключения (esp_wifi reason, напр. 200 = beacon timeout). |
+| `boot_storm` | bool | `true` = 3+ загрузки за 10 минут (reset-петля). |
+| `temp_c` | int | Температура чипа, °C; `-128` = недоступна. |
+| `errs` | string | Топ ошибок: `"0xКОД:СЧЁТЧИК,..."` (до 4), mbedTLS-коды положительные (0x6xxx–0x7xxx), служебные: `0x0001` нет TCP, `0x0002` таймаут, `0x0003` разрыв. Обрезается до 47 символов. |
+| `mtu` | uint16 | MTU сетевого интерфейса (обычно 1500). |
+| `sntp_s` | uint16 | Секунды до валидных часов; `65535` = не применялось. |
+| `sntp_ok` | bool | `true` = часы синхронизированы по NTP; `false` = fallback на build timestamp. |
+| `doh` | uint8 | Битмаска DoH: 1 = использовался, 2 = успешно (0 = не использовался). |
+| `ch` | uint8 | Первичный канал Wi-Fi (2.4 ГГц, 1–14); `0` если неизвестен. |
+| `stage` | uint8 | Этап последнего провала при `have=false`: 0 = нет, 1 = нет TCP, 2 = TLS, 3 = разрыв, 4 = таймаут. |
+| `cfg` | uint8 | Битмаска конфига: 1 DoH-fallback, 2 web UI, 4 Telegram-бот, 8 stats-default-on, 16 rndsni, 32 нестандартный decoy-SNI. |
+| `cpu_mhz` | uint16 | Частота CPU, МГц. |
+| `flash_free` | uint32 | Свободно в текущей app-партиции, байт (0 если неизвестно). |
+| `psram` | bool | Наличие PSRAM. |
+| `chip_rev` | uint16 | Ревизия чипа, формат MXX (major × 100 + minor). |
+| `sni_cat` | uint8 | Категория decoy-SNI: 0 нет, 1 `www.iana.org`, 2 `www.yandex.ru`, 3 `mail.ru`, 4 свой, 5 `rndsni`. |
+| `rid` | string | Ротационный псевдоним: 16 hex-символов = первые 8 байт HMAC-SHA256(локальный секрет, номер дня UTC). `""` до инициализации. |
 
 ### `mode`
 
@@ -136,20 +175,31 @@
 
 ### Примеры
 
-Есть рабочая стратегия, периодический отчёт:
+Есть рабочая стратегия, периодический отчёт (schema 2):
 
 ```json
-{"schema":1,"event":"periodic","fw":"1.0.1","target":"esp32c3","uptime_s":86430,
- "heap":201388,"rssi":-71,"reset":3,"mode":0,"fool":0,"ttl":64,
- "split1":-1,"split2":-1,"have":true,"strategy":"off","scans":1,"probes":1,"fails":0}
+{"schema":2,"event":"periodic","fw":"1.2.0","target":"esp32c3","uptime_s":86430,
+ "heap":201388,"min_heap":160512,"max_block":110592,"rssi":-71,"reset":3,
+ "mode":0,"fool":0,"ttl":64,"split1":-1,"split2":-1,"have":true,
+ "strategy":"off","scans":1,"probes":1,"fails":0,"tried":"","tts_s":2,
+ "strategy_changed":1,"wifi_disc":2,"wifi_reason":200,"boot_storm":false,
+ "temp_c":48,"errs":"","mtu":1500,"sntp_s":4,"sntp_ok":true,"doh":0,"ch":6,
+ "stage":0,"cfg":15,"cpu_mhz":160,"flash_free":630784,"psram":false,
+ "chip_rev":4,"sni_cat":0,"rid":"9f2c41d0ab77e153"}
 ```
 
-Стратегия не найдена (провайдер блокирует всё, что умеет прошивка):
+Стратегия не найдена (провайдер блокирует всё, что умеет прошивка, schema 2):
 
 ```json
-{"schema":1,"event":"periodic","fw":"1.0.1","target":"esp32s3","uptime_s":7205,
- "heap":199104,"rssi":-55,"reset":9,"mode":4,"fool":8,"ttl":64,
- "split1":-1,"split2":-1,"have":false,"strategy":"","scans":3,"probes":42,"fails":42}
+{"schema":2,"event":"periodic","fw":"1.2.0","target":"esp32s3","uptime_s":7205,
+ "heap":199104,"min_heap":150980,"max_block":98304,"rssi":-55,"reset":9,
+ "mode":5,"fool":32,"ttl":64,"split1":-1,"split2":-1,"have":false,
+ "strategy":"","scans":3,"probes":42,"fails":42,
+ "tried":"4:1,4:32,5:1,6:1","tts_s":65535,"strategy_changed":0,
+ "wifi_disc":1,"wifi_reason":15,"boot_storm":false,"temp_c":61,
+ "errs":"0x6a80:38,0x7780:4","mtu":1500,"sntp_s":3,"sntp_ok":true,"doh":3,
+ "ch":11,"stage":2,"cfg":31,"cpu_mhz":240,"flash_free":412160,"psram":false,
+ "chip_rev":2,"sni_cat":5,"rid":"1a77c0be93d24f6e"}
 ```
 
 ## 4. Каденция и семантика доставки
@@ -172,6 +222,7 @@
 ## 5. Обязанности бэкенда
 
 1. Принимать `POST /api/v1/report`, валидировать JSON и типы полей.
+   Поддерживать schema 1 и schema 2 (schema 2 = schema 1 + поля после `fails`).
    Неизвестные поля игнорировать (задел на развитие схемы). Битый JSON или
    неверные типы → `400` (тело любое).
 2. Другие методы на этот путь → `405`.
@@ -196,11 +247,20 @@
 ## 6. Визуализация (рекомендации)
 
 - Временные ряды: отчёты в день, по `event`, по `fw`, по `target`.
-- Распределение стратегий: распарсить `strategy` (mode + fool + ttl + sni),
-  топ-N; отдельно доля `have=false` (провайдер не поддался).
-- Доля `mode=0` (`off`) — сети без фильтрации.
-- Число `reset` с причинами `panic`/`brownout`/`wdt` — сигнал проблем с
-  питанием или прошивкой.
+- **Подбор стратегий**: heatmap по `tried` (какие mode:fool режет DPI первыми),
+  гистограмма `tts_s`, распределение `strategy_changed` («живучесть» обхода),
+  топ рабочих `strategy` и распределение рабочих `split1`/`split2` (тюнинг
+  дефолтов), доля `have=false` и `stage` для них.
+- **Надёжность**: `min_heap`/`max_block` (фрагментация), `wifi_disc` и
+  `wifi_reason`, доля `boot_storm`, гистограмма `temp_c`, топ `errs`.
+- **Сеть/среда**: `mtu`, `sntp_s`/`sntp_ok`, `doh` (использовался/успешен),
+  `ch` (канал 2.4 ГГц — корреляция с помехами).
+- **Конфиг/железо**: разбивка по `cfg` (флаги), `cpu_mhz`, `chip_rev`,
+  `psram`, `flash_free`.
+- **Уникальные устройства**: по `rid` считать дневные уникальные устройства
+  (HyperLogLog по дню). Связывание между днями невозможно без локального
+  секрета устройства — retention по rid не строится, это осознанный трейдофф.
+- Распределение `mode=0` (`off`) — сети без фильтрации.
 - Гистограмма `rssi`, медиана `heap`, распределение `scans`/`probes`/`fails`.
 - Полезен фильтр по дням и разбивка по `fw` (какие версии ещё в поле).
 
@@ -214,7 +274,7 @@
 ### Windows (cmd)
 
 ```bat
-echo {"schema":1,"event":"manual","fw":"1.1.0"}>body.json
+echo {"schema":2,"event":"manual","fw":"1.2.0"}>body.json
 curl --tlsv1.2 --tls-max 1.2 --ssl-no-revoke -i -X POST https://statistics.fairen8.ru/api/v1/report -H "Content-Type: application/json" -H "User-Agent: esp32-zapret/1.1.0" --data-binary @body.json
 ```
 
