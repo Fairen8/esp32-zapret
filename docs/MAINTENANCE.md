@@ -11,11 +11,10 @@ updates, CI, and badge criteria.
 3. Copilot is auto-requested for review (ruleset `copilot-review-releases`) and
    its approval satisfies the required review. Merge once checks are green and
    Copilot has approved (maintainer bypass remains available).
-4. The release workflow builds firmware, creates the `vX.Y.Z` tag and publishes
-   the GitHub release with assets and SLSA provenance — but only after the
-   maintainer **approves the `release` environment** (Actions → Review
-   deployments). The process is idempotent: if the tag already exists,
-   publishing is skipped.
+4. Merging the PR is the go/no-go decision: the push to `releases` runs the test
+   suite, builds the firmware, creates the `vX.Y.Z` tag and publishes the GitHub
+   release with assets and SLSA provenance — no separate approval step. The
+   process is idempotent: if the tag already exists, publishing is skipped.
 5. If the repository secret `IDF_COMPONENT_API_TOKEN` is set, the same workflow
    additionally uploads `components/esp_desync` (version = `VERSION`) to the
    ESP Component Registry. Without the secret the step is skipped silently.
@@ -30,7 +29,7 @@ updates, CI, and badge criteria.
 ## Security updates
 
 - Private reports arrive via GitHub Security Advisories (`SECURITY.md`).
-- Fix on `main` → PR to `releases` → approve → release; reference the advisory
+- Fix on `main` → PR to `releases` → merge (publishes) → reference the advisory
   in `CHANGELOG.md`.
 
 ## CI overview
@@ -38,7 +37,7 @@ updates, CI, and badge criteria.
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `tests` | push to `main`, PRs to `main`/`community`; called by `release` | unit tests, static analysis, repo hygiene, ESP-IDF builds (2 configs), fuzz smoke test |
-| `release` | PR/push to `releases` | runs tests; publishes release after environment approval |
+| `release` | PR/push to `releases` | runs tests; on push publishes the release (the merge is the approval) |
 | `codeql` | all branch pushes, PRs, weekly | CodeQL analysis |
 | `scorecard` | push to `main`, weekly, manual | OpenSSF Scorecard |
 | `pr review request` | PRs to `community`/`releases` | requests maintainer review for external PRs |

@@ -53,7 +53,6 @@ jobs:
     needs: [ tests, check ]
     if: github.event_name == 'push' && needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: write
       id-token: write
