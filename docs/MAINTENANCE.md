@@ -14,7 +14,10 @@ updates, CI, and badge criteria.
 4. Merging the PR is the go/no-go decision: the push to `releases` runs the test
    suite, builds the firmware, creates the `vX.Y.Z` tag and publishes the GitHub
    release with assets and SLSA provenance — no separate approval step. The
-   process is idempotent: if the tag already exists, publishing is skipped.
+   process is idempotent: if the tag already exists, publishing is skipped, so
+   merging a `main → releases` PR that does not bump `VERSION` (docs, CI wording)
+   intentionally produces no new release; a new release starts with a `VERSION`
+   bump and a `CHANGELOG.md` entry.
 5. If the repository secret `IDF_COMPONENT_API_TOKEN` is set, the same workflow
    additionally uploads `components/esp_desync` (version = `VERSION`) to the
    ESP Component Registry. Without the secret the step is skipped silently.
