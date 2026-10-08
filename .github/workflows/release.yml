@@ -45,7 +45,7 @@ jobs:
             echo "Tag v$version already exists, skipping release"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
-            echo "Will publish v$version after approval"
+            echo "Tag v$version is missing: the release will be published when this branch is pushed"
           fi
 
   release:
