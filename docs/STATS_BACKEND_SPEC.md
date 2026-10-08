@@ -185,7 +185,9 @@
    расширяться, сырые данные не должны теряться.
 7. Ограничения: тело ≤1 КБ (иное → `413`), простой rate limit на IP
    (рекомендуется ≤60 запросов/мин; при превышении — `429`, устройство молча
-   пропустит). Учтите, что IP у устройств мобильные/домашние и часто меняются.
+   пропустит). Референсная реализация (statistics.fairen8.ru): **20 запросов с
+   ошибкой (400) с одного IP → `429` на 30 минут**; успешные 2xx в счётчик не
+   попадают. Учтите, что IP у устройств мобильные/домашние и часто меняются.
 8. Считать каждый отчёт событием; дедупликация не требуется и невозможна
    (идентификаторов нет).
 9. HTTPS обязателен; на HTTP-порту допустимо отвечать `400`/`403`, но **не
@@ -202,36 +204,53 @@
 - Гистограмма `rssi`, медиана `heap`, распределение `scans`/`probes`/`fails`.
 - Полезен фильтр по дням и разбивка по `fw` (какие версии ещё в поле).
 
-## 7. Приёмочные тесты (curl)
+## 7. Приёмочные тесты
 
-```bash
-# 1. Валидный отчёт → любой 2xx (204/200)
-curl -i -X POST https://statistics.fairen8.ru/api/v1/report \
-  -H 'Content-Type: application/json' \
-  -d '{"schema":1,"event":"boot","fw":"1.0.1","target":"esp32","uptime_s":47,
-       "heap":214512,"rssi":-63,"reset":1,"mode":4,"fool":1,"ttl":5,
-       "split1":-1,"split2":-1,"have":true,
-       "strategy":"fake_split fool=ttl ttl=5 sni=www.iana.org",
-       "scans":1,"probes":2,"fails":1}'
+Тела с пробелами (а `strategy` всегда с пробелами) **нельзя** передавать
+инлайн через `-d '{...}'` в cmd/PowerShell: кавычки калечат JSON, а серверный
+«ремонт» битого JSON покрывает только простые тела — искалеченный полный
+отчёт будет отклонён. Всегда пишите тело в файл и используйте `--data-binary`.
 
-# 2. Неизвестное поле → всё равно 2xx (игнорируется)
-# 3. Битый JSON → 400
-curl -i -X POST https://statistics.fairen8.ru/api/v1/report \
-  -H 'Content-Type: application/json' -d '{broken'
+### Windows (cmd)
 
-# 4. Не POST → 405
-curl -i https://statistics.fairen8.ru/api/v1/report
-
-# 5. TLS 1.2 работает (устройство использует mbedTLS, TLS 1.2+)
-curl -i --tlsv1.2 --tls-max 1.2 -X POST https://statistics.fairen8.ru/api/v1/report \
-  -H 'Content-Type: application/json' -d '{"schema":1,"event":"manual"}'
-
-# 6. Редиректов нет: ответ на POST должен быть 2xx, а не 301/302/308
-
-# 7. IPv4: у домена должна быть A-запись
-dig +short A statistics.fairen8.ru
+```bat
+echo {"schema":1,"event":"manual","fw":"1.1.0"}>body.json
+curl --tlsv1.2 --tls-max 1.2 --ssl-no-revoke -i -X POST https://statistics.fairen8.ru/api/v1/report -H "Content-Type: application/json" -H "User-Agent: esp32-zapret/1.1.0" --data-binary @body.json
 ```
 
-Критерий готовности: отчёт с устройства (или curl-запрос из теста 1) попадает
-в базу, виден на дашборде, сервер отвечает 2xx без редиректов, TLS 1.2
-работает, битый JSON отклоняется с 400.
+### Windows (PowerShell)
+
+```powershell
+curl.exe --tlsv1.2 --tls-max 1.2 --ssl-no-revoke -i -X POST https://statistics.fairen8.ru/api/v1/report -H "Content-Type: application/json" -H "User-Agent: esp32-zapret/1.1.0" --data-binary "@body.json"
+```
+
+(`curl.exe` — именно внешний curl, а не алиас `Invoke-WebRequest`.)
+
+### Linux/macOS
+
+```bash
+curl -i -X POST https://statistics.fairen8.ru/api/v1/report \
+  -H 'Content-Type: application/json' --data-binary @body.json
+```
+
+### Проверки
+
+1. Полный валидный отчёт (примеры в §3, сохранить в `body.json`) → `204` или
+   любой 2xx.
+2. Неизвестное поле в теле → всё равно 2xx (игнорируется).
+3. Битый JSON (`{"broken`) → `400`.
+4. Не POST (GET) → `405`.
+5. `--tlsv1.2 --tls-max 1.2` — TLS 1.2 работает (в прошивке mbedTLS);
+   `--ssl-no-revoke` — для curl на Windows.
+6. Редиректов нет: ответ на POST — 2xx, не 301/302/308.
+7. A-запись: `nslookup -type=A statistics.fairen8.ru` (Windows) /
+   `dig +short A statistics.fairen8.ru`.
+
+### Защита от «плохих» тестов
+
+- 20 запросов с ошибкой (400) с одного IP → `429` на 30 минут. Успешные (204)
+  в счётчик не попадают.
+- Упёрлись в 429 — подождать 30 минут или тестировать с другого IP.
+
+Критерий готовности: полный отчёт из `body.json` возвращает 2xx, попадает в
+базу и виден на дашборде; битый JSON отклоняется с 400.
