@@ -338,6 +338,7 @@ static void handle_update(const tg_update_t *u)
         else if (strcmp(name, "md5sig") == 0) f = ESP_DESYNC_FOOL_MD5SIG;
         else if (strcmp(name, "badsum") == 0) f = ESP_DESYNC_FOOL_BADSUM;
         else if (strcmp(name, "badseq") == 0) f = ESP_DESYNC_FOOL_BADSEQ;
+        else if (strcmp(name, "datanoack") == 0) f = ESP_DESYNC_FOOL_DATANOACK;
         else if (strcmp(name, "ts") == 0) f = ESP_DESYNC_FOOL_TS;
         else if (strcmp(name, "none") == 0) f = ESP_DESYNC_FOOL_NONE;
         else ok = false;

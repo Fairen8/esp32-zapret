@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Build fuzz target
+      - name: Build fuzz targets
         run: |
           clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
             -Itests/host/stub -Icomponents/esp_desync -Icomponents/esp_desync/include \
@@ -80,9 +80,16 @@ jobs:
           clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
             -c tests/host/stub/esp_random.c -o esp_random.o
           clang++ -fsanitize=fuzzer,address,undefined fuzz_tls.o desync_tls.o esp_random.o -o fuzz_tls
+          clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
+            -Imain -c fuzz/fuzz_doh.c -o fuzz_doh.o
+          clang -std=c17 -g -O1 -fsanitize=fuzzer-no-link,address,undefined \
+            -Imain -c main/doh_parse.c -o doh_parse.o
+          clang++ -fsanitize=fuzzer,address,undefined fuzz_doh.o doh_parse.o -o fuzz_doh
 
-      - name: Run fuzzer for 90 seconds
-        run: ./fuzz_tls -max_total_time=90 -print_final_stats=1
+      - name: Run fuzzers (90 s TLS + 30 s DoH)
+        run: |
+          ./fuzz_tls -max_total_time=90 -print_final_stats=1
+          ./fuzz_doh -max_total_time=30 -print_final_stats=1
 
   build:
     name: build (${{ matrix.name }})

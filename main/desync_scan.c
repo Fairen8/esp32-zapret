@@ -58,8 +58,8 @@ static bool candidate_valid(scan_candidate_t *c)
 {
     const uint32_t fool_mask = ESP_DESYNC_FOOL_TTL | ESP_DESYNC_FOOL_BADSUM |
                                ESP_DESYNC_FOOL_BADSEQ | ESP_DESYNC_FOOL_MD5SIG |
-                               ESP_DESYNC_FOOL_DATANOACK;
-    if (c->mode > ESP_DESYNC_MODE_TLSREC) {
+                               ESP_DESYNC_FOOL_DATANOACK | ESP_DESYNC_FOOL_TS;
+    if (c->mode > ESP_DESYNC_MODE_SEQOVL) {
         return false;
     }
     c->fooling &= fool_mask;
