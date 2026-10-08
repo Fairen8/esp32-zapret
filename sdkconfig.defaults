@@ -18,5 +18,8 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# Anonymous statistics: on by default (disable with /stats off or in the web UI)
+CONFIG_APP_STATS_DEFAULT_ON=y
+
 # SNTP: try up to 3 servers (CONFIG_APP_SNTP_SERVERS)
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
