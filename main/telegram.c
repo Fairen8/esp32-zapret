@@ -260,11 +260,16 @@ int tg_send_message(int64_t chat_id, const char *text)
     return n;
 }
 
-int tg_probe(int timeout_ms)
+int tg_probe_ex(int timeout_ms, int *stage)
 {
     static char resp[256];
     uint32_t ips[4];
     int n = 0;
+    int fstage = HTTPS_STAGE_TLS;
+
+    if (stage != NULL) {
+        *stage = HTTPS_STAGE_OK;
+    }
 
     if (CFG_TG_API_IPS[0] != '\0') {
         n = net_parse_ip_list(CFG_TG_API_IPS, ips, 4);
@@ -274,19 +279,34 @@ int tg_probe(int timeout_ms)
     }
 
     https_conn_t conn;
-    if (https_connect(&conn, TG_HOST, ips, n, 443, TG_PROBE_CONNECT_TIMEOUT_MS,
-                      timeout_ms, false) != 0) {
+    if (https_connect_ex(&conn, TG_HOST, ips, n, 443, TG_PROBE_CONNECT_TIMEOUT_MS,
+                         timeout_ms, false, &fstage) != 0) {
         /* Pinned list is stale: fall back to the full path (DNS/DoH). */
         if (tg_connect(&conn, timeout_ms) != 0) {
+            if (stage != NULL) {
+                *stage = fstage;
+            }
             return -1;
         }
+        fstage = HTTPS_STAGE_TLS;
     }
 
     int status = 0;
     int r = https_request(&conn, "/", "application/json", resp, sizeof(resp), timeout_ms, &status);
     strlcpy(s_last_endpoint, https_endpoint(&conn), sizeof(s_last_endpoint));
     https_close(&conn);
-    return (r > 0) ? 0 : -1;
+    if (r <= 0) {
+        if (stage != NULL) {
+            *stage = HTTPS_STAGE_RST;
+        }
+        return -1;
+    }
+    return 0;
+}
+
+int tg_probe(int timeout_ms)
+{
+    return tg_probe_ex(timeout_ms, NULL);
 }
 
 int tg_selftest(void)

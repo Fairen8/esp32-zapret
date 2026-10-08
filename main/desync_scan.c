@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "esp_desync.h"
 #include "telegram.h"
+#include "https_client.h"
 #include "scan_candidates.h"
 #include "desync_scan.h"
 
@@ -27,6 +28,33 @@ static uint32_t s_scans;
 static uint32_t s_probes;
 static uint32_t s_fails;
 static int64_t s_last_ok_ms;
+
+/* Telemetry (schema 2) */
+static char s_tried[SCAN_TRIED_MAX];
+static uint16_t s_tts_s = 0xFFFF;
+static uint16_t s_changes;
+static uint8_t s_stage;
+
+static void tried_reset(void)
+{
+    s_tried[0] = 0;
+}
+
+static void tried_append(const scan_candidate_t *c)
+{
+    size_t len = strlen(s_tried);
+    if (len + 8 >= sizeof(s_tried)) {
+        return;
+    }
+    snprintf(s_tried + len, sizeof(s_tried) - len, "%s%u:%u",
+             len ? "," : "", (unsigned)c->mode, (unsigned)c->fooling);
+}
+
+static bool candidate_equal(const scan_candidate_t *a, const scan_candidate_t *b)
+{
+    return a->mode == b->mode && a->fooling == b->fooling && a->ttl == b->ttl &&
+           a->rndsni == b->rndsni && strcmp(a->sni, b->sni) == 0;
+}
 
 static void apply_candidate(const scan_candidate_t *c)
 {
@@ -113,6 +141,9 @@ void scan_set_manual(bool on)
 {
     s_manual = on;
     s_fail_streak = 0;
+    if (on) {
+        s_changes++; /* a manual edit is a strategy change */
+    }
     save_manual(on);
     ESP_LOGI(TAG, "manual override %s", on ? "enabled" : "disabled");
 }
@@ -150,7 +181,17 @@ static int probe_with(const scan_candidate_t *c)
 {
     apply_candidate(c);
     vTaskDelay(pdMS_TO_TICKS(PROBE_SETTLE_MS));
-    return probe_once();
+    s_probes++;
+    int stage = 0;
+    if (tg_probe_ex(PROBE_TIMEOUT_MS, &stage) == 0) {
+        s_last_ok_ms = esp_timer_get_time() / 1000;
+        s_fail_streak = 0;
+        s_stage = 0;
+        return 0;
+    }
+    s_stage = (uint8_t)stage;
+    s_fails++;
+    return -1;
 }
 
 void scan_init(void)
@@ -183,14 +224,18 @@ int scan_find_working(void)
         scan_set_manual(false);
     }
     s_scans++;
+    tried_reset();
+    int64_t t0 = esp_timer_get_time();
 
     if (s_have) {
         char buf[80];
         scan_format(&s_current, buf, sizeof(buf));
         ESP_LOGI(TAG, "probing saved strategy: %s", buf);
         if (probe_with(&s_current) == 0) {
+            s_tts_s = (uint16_t)((esp_timer_get_time() - t0) / 1000000);
             return 0;
         }
+        tried_append(&s_current);
     }
 
     scan_candidate_t cands[SCAN_MAX_CANDIDATES];
@@ -200,16 +245,22 @@ int scan_find_working(void)
         scan_format(&cands[i], buf, sizeof(buf));
         ESP_LOGI(TAG, "scan %d/%d: %s", i + 1, n, buf);
         if (probe_with(&cands[i]) == 0) {
+            if (!s_have || !candidate_equal(&s_current, &cands[i])) {
+                s_changes++;
+            }
             s_current = cands[i];
             s_have = true;
             save_current();
+            s_tts_s = (uint16_t)((esp_timer_get_time() - t0) / 1000000);
             ESP_LOGI(TAG, "selected strategy: %s", buf);
             return 0;
         }
+        tried_append(&cands[i]);
     }
 
     ESP_LOGE(TAG, "no working strategy among %d candidates", n);
     s_have = false;
+    s_tts_s = 0xFFFF;
     return -1;
 }
 
@@ -280,4 +331,16 @@ void scan_get_status(scan_status_t *out)
     } else {
         strlcpy(out->strategy, "(not detected)", sizeof(out->strategy));
     }
+}
+
+void scan_get_telemetry(scan_telemetry_t *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    strlcpy(out->tried, s_tried, sizeof(out->tried));
+    out->tts_s = s_tts_s;
+    out->changes = s_changes;
+    out->stage = s_stage;
 }

@@ -126,8 +126,12 @@ Since v1.0.1 the firmware can send a small anonymous report to
 different providers. Since v1.1.1 sending is **enabled by default**.
 
 What is sent: firmware version, chip, uptime, RSSI, mode/fooling/TTL, split
-positions, the selected strategy and probe counters. No identifiers (device or
-chat IDs, SSIDs, IP addresses) are sent.
+positions, the selected strategy and probe counters, plus (since v1.2.0)
+diagnostics: strategies tried before success and time-to-strategy, heap
+metrics, Wi-Fi disconnects, temperature, top error codes, DoH/SNTP usage,
+failure stage, config and hardware. There are no stable identifiers: no device
+or chat IDs, SSIDs, IP addresses. The only pseudonym is `rid` = HMAC(local
+secret, current day); it rotates daily and cannot link a device across days.
 
 Disable with `/stats off` (persisted in NVS) or the web UI toggle; re-enable
 with `/stats on`. Build with `CONFIG_APP_STATS_DEFAULT_ON=n` to opt out by

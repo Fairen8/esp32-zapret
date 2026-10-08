@@ -32,6 +32,10 @@ idf_component_register(
         esp_netif
         esp_timer
         esp_app_format
+        esp_hw_support
+        esp_driver_tsens
+        app_update
+        bootloader_support
         esp_http_server
         console
         json

@@ -29,6 +29,10 @@ int tg_selftest(void);
 /* Lightweight connect+TLS probe used by the strategy scanner. */
 int tg_probe(int timeout_ms);
 
+/* Same, but reports the failure stage (HTTPS_STAGE_* from https_client.h)
+ * for the scanner telemetry. */
+int tg_probe_ex(int timeout_ms, int *stage);
+
 /* Returns: response length (>0) or -1 on error */
 int tg_send_message(int64_t chat_id, const char *text);
 

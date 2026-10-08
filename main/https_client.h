@@ -22,9 +22,22 @@ typedef struct {
     char endpoint[16];
 } https_conn_t;
 
+/* Failure stages reported by https_connect_ex (used by the scanner `stage`
+ * telemetry field): 1 = no TCP, 2 = TLS handshake, 3 = connection reset,
+ * 4 = timeout. */
+#define HTTPS_STAGE_OK      0
+#define HTTPS_STAGE_TCP     1
+#define HTTPS_STAGE_TLS     2
+#define HTTPS_STAGE_RST     3
+#define HTTPS_STAGE_TIMEOUT 4
+
 /* Connects to host:port. Tries the given IPv4 candidates first (network byte
  * order), then DNS when dns_fallback is true. Returns 0 on success (TCP + TLS
- * handshake). */
+ * handshake). When fail_stage is non-NULL it receives one of HTTPS_STAGE_*. */
+int https_connect_ex(https_conn_t *c, const char *host, const uint32_t *ips_be, int n_ips,
+                     uint16_t port, int connect_timeout_ms, int handshake_timeout_ms,
+                     bool dns_fallback, int *fail_stage);
+
 int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int n_ips,
                   uint16_t port, int connect_timeout_ms, int handshake_timeout_ms,
                   bool dns_fallback);
