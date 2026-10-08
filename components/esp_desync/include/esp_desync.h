@@ -18,6 +18,7 @@ typedef enum {
     ESP_DESYNC_MODE_FAKE,
     ESP_DESYNC_MODE_FAKE_SPLIT,
     ESP_DESYNC_MODE_TLSREC,
+    ESP_DESYNC_MODE_SEQOVL,
 } esp_desync_mode_t;
 
 #define ESP_DESYNC_FOOL_NONE      0u
@@ -26,6 +27,7 @@ typedef enum {
 #define ESP_DESYNC_FOOL_BADSEQ    (1u << 2)
 #define ESP_DESYNC_FOOL_MD5SIG    (1u << 3)
 #define ESP_DESYNC_FOOL_DATANOACK (1u << 4)
+#define ESP_DESYNC_FOOL_TS        (1u << 5)
 
 typedef struct {
     esp_desync_mode_t mode;
@@ -37,6 +39,13 @@ typedef struct {
     int16_t  split_pos2;
     uint16_t op_delay_ms;
     uint8_t  repeats;
+    /* Randomize the decoy SNI for every fake packet (varying fake size). */
+    bool     rndsni;
+    /* With repeats > 1, use a different built-in decoy SNI per fake. */
+    bool     multi_sni;
+    /* seqovl: how many bytes to shift the fake sequence number back
+     * (0 = default 32). */
+    int16_t  seqovl_len;
 } esp_desync_config_t;
 
 esp_err_t esp_desync_init(const esp_desync_config_t *cfg);

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# ESP32-S3 dev boards expose the native USB Serial/JTAG console; use it by
+# default. On boards wired to an external USB-UART chip, switch back to
+# CONFIG_ESP_CONSOLE_UART_DEFAULT in menuconfig.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# ESP32-C3 dev boards have no UART bridge: use the native USB Serial/JTAG
+# console by default. On boards with an external USB-UART chip, switch back
+# to CONFIG_ESP_CONSOLE_UART_DEFAULT in menuconfig.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

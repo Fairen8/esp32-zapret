@@ -35,7 +35,7 @@ int main(void)
 
     /* Candidate sanity. */
     for (int i = 0; i < n; i++) {
-        CHECK(c[i].mode <= ESP_DESYNC_MODE_TLSREC);
+        CHECK(c[i].mode <= ESP_DESYNC_MODE_SEQOVL);
         if (c[i].mode != ESP_DESYNC_MODE_OFF) {
             CHECK(c[i].sni[0] != 0);
             CHECK(strlen(c[i].sni) < SCAN_SNI_MAX);
@@ -46,6 +46,9 @@ int main(void)
     bool yandex = false;
     bool split = false;
     bool tlsrec = false;
+    bool rndsni = false;
+    bool seqovl = false;
+    bool ts_fool = false;
     for (int i = 0; i < n; i++) {
         if (strcmp(c[i].sni, "www.yandex.ru") == 0) {
             yandex = true;
@@ -56,10 +59,28 @@ int main(void)
         if (c[i].mode == ESP_DESYNC_MODE_TLSREC) {
             tlsrec = true;
         }
+        if (c[i].mode == ESP_DESYNC_MODE_SEQOVL) {
+            seqovl = true;
+        }
+        if (c[i].rndsni) {
+            rndsni = true;
+            char rbuf[96];
+            scan_format(&c[i], rbuf, sizeof(rbuf));
+            CHECK(strstr(rbuf, "rndsni") != NULL);
+        }
+        if (c[i].fooling & ESP_DESYNC_FOOL_TS) {
+            ts_fool = true;
+            char tbuf[96];
+            scan_format(&c[i], tbuf, sizeof(tbuf));
+            CHECK(strstr(tbuf, "fool=ts") != NULL);
+        }
     }
     CHECK(yandex);
     CHECK(split);
     CHECK(tlsrec);
+    CHECK(rndsni);
+    CHECK(seqovl);
+    CHECK(ts_fool);
 
     /* Formatting. */
     char buf[96];
@@ -69,6 +90,13 @@ int main(void)
     CHECK(strstr(buf, "fake_split") != NULL);
     CHECK(strstr(buf, "ttl=3") != NULL);
     CHECK(strstr(buf, "www.iana.org") != NULL);
+    for (int i = 0; i < n; i++) {
+        if (c[i].mode == ESP_DESYNC_MODE_SEQOVL) {
+            scan_format(&c[i], buf, sizeof(buf));
+            CHECK(strncmp(buf, "seqovl", 6) == 0);
+            break;
+        }
+    }
 
     /* Overflow safety. */
     scan_candidate_t small[2];

@@ -6,7 +6,7 @@
 #include "esp_desync.h"
 
 #define SCAN_SNI_MAX 40
-#define SCAN_MAX_CANDIDATES 16
+#define SCAN_MAX_CANDIDATES 24
 
 /* One candidate desync strategy for the boot-time auto-scan. Pure module:
  * no ESP-IDF dependencies besides the public esp_desync types, so it is
@@ -15,6 +15,7 @@ typedef struct {
     esp_desync_mode_t mode;
     uint32_t fooling;
     uint8_t ttl;
+    bool rndsni;
     char sni[SCAN_SNI_MAX];
 } scan_candidate_t;
 

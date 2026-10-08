@@ -90,11 +90,14 @@ with full control over seq/ack/TTL/checksum.
 | `fake` | `fake` | injects a decoy ClientHello with the original seq |
 | `fake_split` | `fake,split2` | **default**: fake + split of the real hello |
 | `tlsrec` | `tlsrec` (tpws) | rewrites the ClientHello into two TLS records so the DPI cannot reassemble the SNI |
+| `seqovl` | `seqovl` | fake with the sequence shifted back, overlapping the stream head (`CONFIG_ESP_DESYNC_SEQOVL_LEN`, 32 bytes by default) |
 
 Fake fooling methods: `TTL` (default), `MD5SIG` (Linux servers silently drop a
 packet with the TCP MD5 option), `BADSUM` (does not pass home NATs with conntrack
-checksum validation), `BADSEQ` (pushes seq out of the window). Defaults live in
-Kconfig; runtime switch via `/fool`.
+checksum validation), `BADSEQ` (pushes seq out of the window), `DATANOACK` (no
+ACK flag), `TS` (TCP timestamps with a random value, combinable with TTL).
+Defaults live in Kconfig; runtime switch via `/fool`. `/rndsni on` gives every
+fake a random decoy SNI, so the packet size stops being a fingerprint too.
 
 ## Auto-tuning and health monitoring
 
@@ -111,8 +114,10 @@ Since v1.0.0 the device **detects the optimal operating parameters itself**:
   (Cloudflare/Google).
 
 Manual control: `/scan` re-runs the scan, `/strategy` shows the current strategy
-and probe statistics. Manual `/desync`, `/ttl`, `/fool` still work and take
-precedence until the next auto-scan.
+and probe statistics. Manual `/desync`, `/ttl`, `/fool` are persisted in NVS
+(survive reboot) and take precedence over auto-detection: health checks never
+reset them; they are cleared by `/scan` or after two failed checks in a row.
+`/status` shows whether the current settings are `manual` or `auto`.
 
 ## Anonymous statistics (voluntary)
 
@@ -141,12 +146,20 @@ idf.py menuconfig                          # Component config -> esp_desync anti
 idf.py build flash monitor
 ```
 
+> **Important:** `CFG_TG_ADMIN_ID=0` accepts commands from any chat — anyone
+> who finds the bot can wake the PC and change the bypass settings. Set your
+> numeric chat id (see @userinfobot); it is effectively the device password.
+
 Prebuilt images are available in
 [Releases](https://github.com/Fairen8/esp32-zapret/releases): merged images for
 **esp32**, **esp32s3**, **esp32c3** and a **no-bot** variant (`esp32-nobot`,
-periodic TLS self-test through esp_desync), plus a source archive. Release
-binaries are built **with placeholder credentials** (no Wi-Fi/token) — build
-from source with your own `secrets.h` for real use.
+periodic TLS self-test through esp_desync), plus a source archive.
+
+Since v1.1.0 **no toolchain is needed**: flash the image, and on first boot the
+device starts a setup access point `esp32-zapret-XXXX` (password
+`zapret12345`). Connect to it, open **http://192.168.4.1** and set Wi-Fi, the
+bot token, the PC MAC and a new web password. The same settings page then works
+on the device IP (login `admin`); see [INSTALL_RU.md](INSTALL_RU.md).
 
 ### Windows: non-ASCII project paths
 
@@ -163,17 +176,29 @@ By default the helper expects the layout `D:\esp32-zapret\{esp-idf,python,tools,
 all paths can be overridden with `-IdfPath`, `-ToolsPath`, `-PythonDir`,
 `-WorkDir`, `-BuildDir`.
 
+### ESP32-C3 / ESP32-S3 console
+
+C3/S3 builds use the native **USB Serial/JTAG** console by default
+(`sdkconfig.defaults.esp32c3` / `sdkconfig.defaults.esp32s3`): connect the cable
+to the chip's own USB port — `idf.py monitor` will show the log. On boards with
+an external USB-UART bridge (CP210x/CH340) select
+`CONFIG_ESP_CONSOLE_UART_DEFAULT=y` in `menuconfig`.
+
 ## Bot commands
 
 ```
-/wake [AA:BB:CC:DD:EE:FF]   send a magic packet (no argument — MAC from secrets.h)
-/status                     uptime, heap, RSSI, mode/TTL/fooling, Telegram IP and HTTP status
-/desync <mode>              off | split | disorder | fake | fake_split | tlsrec
+/wake [AA:BB:CC:DD:EE:FF]   send a magic packet (no argument — MAC from settings)
+/status                     uptime, heap, RSSI, mode/TTL/fooling/rndsni, IP and HTTP status
+/desync <mode>              off | split | disorder | fake | fake_split | tlsrec | seqovl
 /ttl <1..255>               fake packet TTL
-/fool <mode>                ttl | md5sig | badsum | badseq | none
-/scan                       re-run strategy auto-detection
+/fool <mode>                ttl | md5sig | badsum | badseq | datanoack | ts | none
+/rndsni on|off              random decoy SNI (and size) for every fake
+/scan                       re-run strategy auto-detection (drops manual tuning)
 /strategy                   current strategy and probe statistics
 /stats on|off               anonymous statistics (off by default)
+/heap                       free/minimum heap and largest block
+/ip                         IP, gateway, SSID, RSSI
+/reboot                     restart the device
 ```
 
 ### Tuning TTL
@@ -188,8 +213,9 @@ TTL is the main knob. The fake must reach the DPI but must not reach the server:
 4. The minimal working TTL ≈ the hop number of your DPI (methodology from the
    zapret documentation).
 
-If TTL does not help, try `/fool md5sig`, then `fake` without split, then
-`disorder`, `tlsrec`.
+If TTL does not help, try `/fool md5sig`, then `ts`, `fake` without split, then
+`disorder`, `tlsrec`, `seqovl`, then `/rndsni on`. The whole set can be
+re-tried over Telegram in a couple of minutes.
 
 ## Limitations
 
@@ -208,7 +234,8 @@ If TTL does not help, try `/fool md5sig`, then `fake` without split, then
   through them (see zapret docs).
 - IP-level blocking cannot be solved by DPI tricks — use a proxy/VPS or a live
   address from the list.
-- One active "armed" connection at a time (the bot works sequentially).
+- Parallel connections are supported (armed-flow table of 4 sockets); the bot
+  still works sequentially.
 - The target is a DPI that interprets the stream in a limited way; a full TCP
   stack (transparent proxy/Squid) cannot be fooled.
 
@@ -216,12 +243,13 @@ If TTL does not help, try `/fool md5sig`, then `fake` without split, then
 
 - [x] Runtime mode/TTL/fooling switching over Telegram
 - [x] Telegram endpoint pin/failover by IP
-- [ ] `fake` with multiple SNIs and `rndsni`
-- [ ] seqovl overlap
-- [ ] `ts` fooling (TCP timestamps, like ALT1 in zapret)
-- [ ] DoH / DNS anti-spoofing
-- [ ] NVS settings + Web UI
-- [ ] ESP32-S3/C3 (the LwIP part works unchanged)
+- [x] `fake` with multiple SNIs and `rndsni`
+- [x] seqovl overlap
+- [x] `ts` fooling (TCP timestamps, like ALT1 in zapret)
+- [x] DoH / DNS anti-spoofing
+- [x] NVS settings + Web UI (v1.1.0)
+- [x] ESP32-S3/C3 (releases and field testing; USB Serial/JTAG console)
+- [ ] Publish `esp_desync` to the ESP Component Registry (workflow ready, needs a token)
 
 ## CI/CD and releases
 

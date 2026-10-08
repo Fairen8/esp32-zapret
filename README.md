@@ -88,11 +88,15 @@ AP может просто дропнуть незашифрованный fake.
 | `fake` | `fake` | инжектит фейковый ClientHello с исходным seq |
 | `fake_split` | `fake,split2` | **дефолт**: фейк + нарезка реального |
 | `tlsrec` | `tlsrec` (tpws) | переписывает ClientHello в две TLS-записи, чтобы DPI не собрал SNI |
+| `seqovl` | `seqovl` | фейк со сдвинутым назад seq перекрывает голову потока (`CONFIG_ESP_DESYNC_SEQOVL_LEN`, по умолчанию 32 байта) |
 
 Fooling для фейка: `TTL` (дефолт), `MD5SIG` (Linux-серверы молча дропают пакет с
 TCP MD5 option), `BADSUM` (не проходит через домашние NAT с conntrack-проверкой
-чексумм), `BADSEQ` (seq выводится из окна). По умолчанию Kconfig, на лету —
-команда `/fool`.
+чексумм), `BADSEQ` (seq выводится из окна), `DATANOACK` (без флага ACK),
+`TS` (TCP timestamps со случайным значением; комбинируется с TTL). По умолчанию
+Kconfig, на лету — команда `/fool`. `rndsni` (`/rndsni on`) подставляет
+случайный decoy-SNI в каждый фейк, так что перестаёт быть постоянным и размер
+пакета.
 
 ## Авто-подбор параметров и мониторинг
 
@@ -109,8 +113,11 @@ TCP MD5 option), `BADSUM` (не проходит через домашние NAT
   (Cloudflare/Google).
 
 Ручное управление: `/scan` — перезапустить перебор, `/strategy` — текущая
-стратегия и статистика. Ручные `/desync`, `/ttl`, `/fool` по-прежнему работают
-и имеют приоритет до следующего автоподбора.
+стратегия и статистика. Ручные `/desync`, `/ttl`, `/fool`, `/rndsni`
+сохраняются в NVS (переживают перезагрузку) и имеют приоритет над автоподбором:
+health-проверки не сбрасывают их, они снимаются только командой `/scan` или
+после двух неудачных проверок подряд. Текущий режим виден в `/status`
+(`manual`/`auto`).
 
 ## Анонимная статистика (по желанию)
 
@@ -130,20 +137,45 @@ TCP MD5 option), `BADSUM` (не проходит через домашние NAT
 
 ## Быстрый старт
 
+Готовые сборки — в [Releases](https://github.com/Fairen8/esp32-zapret/releases):
+merged-образы для **esp32**, **esp32s3**, **esp32c3** и вариант **без бота**
+(`esp32-nobot`, периодический TLS self-test через esp_desync), плюс архив с
+исходниками.
+
+Начиная с v1.1.0 **тулчейн не нужен**: прошейте образ, при первом включении
+плата поднимет точку доступа `esp32-zapret-XXXX` (пароль `zapret12345`),
+подключитесь к ней и откройте **http://192.168.4.1** — там задаются Wi-Fi,
+токен бота, MAC ПК и новый пароль. Дальше те же настройки доступны по IP
+устройства (логин `admin`). Подробно — [INSTALL_RU.md](INSTALL_RU.md).
+
+Сборка из исходников (для разработки):
+
 ```bash
 git clone https://github.com/Fairen8/esp32-zapret.git
 cd esp32-zapret
-cp main/secrets_example.h main/secrets.h   # Wi-Fi, токен, MAC ПК
+cp main/secrets_example.h main/secrets.h   # значения по умолчанию
 idf.py set-target esp32
 idf.py menuconfig                          # Component config -> esp_desync anti-DPI
 idf.py build flash monitor
 ```
 
-Готовые сборки — в [Releases](https://github.com/Fairen8/esp32-zapret/releases):
-merged-образы для **esp32**, **esp32s3**, **esp32c3** и вариант **без бота**
-(`esp32-nobot`, периодический TLS self-test через esp_desync), плюс архив с
-исходниками. Бинарники собраны **с заглушками** (без вашего Wi-Fi/токена) —
-для реальной работы нужна сборка со своим `secrets.h`.
+> **Важно:** `CFG_TG_ADMIN_ID=0` означает «принимать команды от кого угодно» —
+> любой, кто узнает вашего бота, сможет будить ПК и менять настройки обхода.
+> Укажите свой числовой chat id (узнать: @userinfobot) — это фактически пароль
+> устройства.
+
+### Веб-интерфейс и первичная настройка
+
+- Если устройство не настроено (или прошито готовым образом), оно вместо
+  зависания поднимает setup-точку доступа и веб-страницу `http://192.168.4.1`;
+  в no-bot сборке токен не требуется.
+- После настройки сервер работает по IP устройства: статус, Wi-Fi (включая
+  статический IP и сброс привязки BSSID), бот, Wake-on-LAN, режим/TTL/fooling,
+  автоподбор, статистика, перезагрузка и сброс настроек. Защита — HTTP Basic
+  (`admin` / пароль веб-интерфейса).
+- Альтернатива — serial-консоль: `setwifi`, `settoken`, `setadmin`, `setmac`,
+  `setwebpass`, `status`, `reboot`, `erase`.
+- Отключается через `CONFIG_APP_WEB_UI=n`.
 
 ### Windows: кириллица в пути
 
@@ -162,17 +194,29 @@ powershell -ExecutionPolicy Bypass -File tools\win-build.ps1 -Action flash-monit
 
 Короткая инструкция для передачи проекта другому человеку — [INSTALL_RU.md](INSTALL_RU.md).
 
+### ESP32-C3 / ESP32-S3: консоль
+
+Для C3/S3 сборка использует нативный **USB Serial/JTAG** как основную консоль
+(`sdkconfig.defaults.esp32c3` / `sdkconfig.defaults.esp32s3`): подключайте кабель
+к USB-порту самого чипа — `idf.py monitor` покажет лог. На платах с внешним
+USB-UART-мостом (CP210x/CH340) верните `CONFIG_ESP_CONSOLE_UART_DEFAULT=y` в
+`menuconfig`.
+
 ## Команды бота
 
 ```
-/wake [AA:BB:CC:DD:EE:FF]   отправить magic packet (без аргумента — MAC из secrets.h)
-/status                     uptime, heap, RSSI, режим/TTL/fooling, IP и HTTP-статус Telegram
-/desync <mode>              off | split | disorder | fake | fake_split | tlsrec
+/wake [AA:BB:CC:DD:EE:FF]   отправить magic packet (без аргумента — MAC из настроек)
+/status                     uptime, heap, RSSI, режим/TTL/fooling/rndsni, IP и HTTP-статус Telegram
+/desync <mode>              off | split | disorder | fake | fake_split | tlsrec | seqovl
 /ttl <1..255>               TTL фейка
-/fool <mode>                ttl | md5sig | badsum | badseq | none
-/scan                       перезапустить автоподбор стратегии
+/fool <mode>                ttl | md5sig | badsum | badseq | datanoack | ts | none
+/rndsni on|off              случайный decoy-SNI (и размер) для каждого фейка
+/scan                       перезапустить автоподбор (снимает ручные настройки)
 /strategy                   текущая стратегия и статистика проб
 /stats on|off               анонимная статистика (по умолчанию выключена)
+/heap                       свободная/минимальная heap и крупнейший блок
+/ip                         IP, шлюз, SSID, RSSI
+/reboot                     перезагрузка
 ```
 
 ### Как подобрать TTL
@@ -187,8 +231,9 @@ TTL — главный параметр. Фейк должен дойти до D
 4. Минимальный работающий TTL ≈ номер хопа вашего DPI (методика из документации
    zapret).
 
-Если TTL не помогает — попробуйте `/fool md5sig`, затем `fake` без split, затем
-`disorder`, `tlsrec`. Набор перебирается за пару минут через Telegram.
+Если TTL не помогает — попробуйте `/fool md5sig`, затем `ts`, `fake` без split,
+затем `disorder`, `tlsrec`, `seqovl`, затем `/rndsni on`. Набор перебирается за
+пару минут через Telegram.
 
 ## Структура
 
@@ -199,7 +244,11 @@ components/esp_desync/
   desync_pcb.c        snd_nxt/rcv_nxt сокета через tcp_active_pcbs + tcpip_callback
   desync_inject.c     сборка TCP-сегмента + ip4_output_if (TTL/badsum/md5sig/datanoack)
 main/
-  main.c              Wi-Fi, SNTP, long-poll, команды
+  main.c              Wi-Fi/SNTP/long-poll, команды, BSSID pinning, static IP
+  app_settings.c      runtime-настройки в NVS (Wi-Fi/токен/WoL/веб-пароль)
+  setup_mode.c        setup-режим: AP + serial-консоль (setwifi/…)
+  webui.c             веб-сервер: первичная настройка и полные настройки
+  desync_scan.c       автоподбор стратегий, health-check, NVS
   telegram.c          минимальный HTTPS-клиент на mbedTLS через esp_desync
   wol.c               magic packet
 tools/win-build.ps1   сборка на Windows из пути с кириллицей
@@ -221,7 +270,8 @@ tools/win-build.ps1   сборка на Windows из пути с кирилли�
   не работает (см. документацию zapret).
 - Блокировка по IP обходом на уровне DPI не лечится — нужен прокси/VPS или живой
   адрес из списка.
-- Один активный «вооружённый» коннект за раз (бот работает последовательно).
+- Параллельные соединения поддерживаются (таблица «вооружённых» потоков на 4
+  сокета), но бот по-прежнему работает последовательно.
 - Цель — DPI, интерпретирующий поток ограниченно; полноценный TCP-стек
   (прозрачный прокси/Squid) не обмануть.
 
@@ -229,12 +279,13 @@ tools/win-build.ps1   сборка на Windows из пути с кирилли�
 
 - [x] Переключение режима/TTL/fooling на лету (Telegram)
 - [x] Pin/failover серверов Telegram по IP
-- [ ] `fake` с несколькими SNI и `rndsni`
-- [ ] seqovl-перекрытие
-- [ ] fooling `ts` (TCP timestamps, как ALT1 в zapret)
-- [ ] DoH / DNS-антиподмена
-- [ ] настройки в NVS + Web UI
-- [ ] ESP32-S3/C3 (LwIP-часть работает без изменений)
+- [x] `fake` с несколькими SNI и `rndsni`
+- [x] seqovl-перекрытие
+- [x] fooling `ts` (TCP timestamps, как ALT1 в zapret)
+- [x] DoH / DNS-антиподмена
+- [x] настройки в NVS + Web UI (v1.1.0)
+- [x] ESP32-S3/C3 (релизы и полевая проверка; консоль USB Serial/JTAG)
+- [ ] Публикация `esp_desync` в ESP Component Registry (workflow готов, нужен токен)
 
 ## CI/CD и релизы
 
@@ -243,6 +294,9 @@ tools/win-build.ps1   сборка на Windows из пути с кирилли�
   в двух конфигурациях.
 - Релиз идёт через PR `main` → `releases`: те же проверки выполняются как
   обязательные, а после мержа автоматически публикуется релиз по файлу `VERSION`.
+- Готовые образы настраиваются без пересборки (setup-AP + веб-интерфейс).
+- Если задан секрет `IDF_COMPONENT_API_TOKEN`, релиз дополнительно публикует
+  компонент `esp_desync` в ESP Component Registry.
 - Публикация идемпотентна: если тег `vX.Y.Z` уже существует, шаг релиза
   пропускается. Артефакты: `esp32-zapret-merged.bin` и архив с исходниками,
   `INSTALL_RU.md` и прошивкой.

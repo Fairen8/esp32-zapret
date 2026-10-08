@@ -6,6 +6,8 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "esp_crt_bundle.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "mbedtls/net_sockets.h"
 #include "esp_desync.h"
 #include "net_utils.h"
@@ -132,14 +134,22 @@ static int parse_http_status(const char *r)
     return atoi(sp + 1);
 }
 
-static int ssl_write_all(mbedtls_ssl_context *ssl, const char *data, size_t len)
+/* Writes the whole buffer, but never spins forever: a peer that keeps the
+ * window closed or a stuck TCP connection aborts the request on timeout. */
+static int ssl_write_all(mbedtls_ssl_context *ssl, const char *data, size_t len, int timeout_ms)
 {
     size_t off = 0;
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
     while (off < len) {
         int n = mbedtls_ssl_write(ssl, (const unsigned char *)data + off, len - off);
         if (n > 0) {
             off += (size_t)n;
         } else if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            if (esp_timer_get_time() > deadline) {
+                ESP_LOGW(TAG, "write timeout after %d ms", timeout_ms);
+                return -1;
+            }
+            vTaskDelay(1);
             continue;
         } else {
             ESP_LOGW(TAG, "write failed: -0x%04x", (unsigned)-n);
@@ -196,7 +206,7 @@ int https_request(https_conn_t *c, const char *path, const char *accept,
     if (rl <= 0 || rl >= (int)sizeof(req)) {
         return -1;
     }
-    if (ssl_write_all(&c->ssl, req, (size_t)rl) != 0) {
+    if (ssl_write_all(&c->ssl, req, (size_t)rl, timeout_ms) != 0) {
         return -1;
     }
     return read_response(c, resp, resp_sz, timeout_ms, http_status);
@@ -226,8 +236,8 @@ int https_post_json(https_conn_t *c, const char *path, const char *json,
     if (hl <= 0 || hl >= (int)sizeof(hdr)) {
         return -1;
     }
-    if (ssl_write_all(&c->ssl, hdr, (size_t)hl) != 0 ||
-        ssl_write_all(&c->ssl, json, body_len) != 0) {
+    if (ssl_write_all(&c->ssl, hdr, (size_t)hl, timeout_ms) != 0 ||
+        ssl_write_all(&c->ssl, json, body_len, timeout_ms) != 0) {
         return -1;
     }
 

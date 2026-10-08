@@ -13,6 +13,32 @@ static uint32_t rd24(const uint8_t *p)
     return ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2];
 }
 
+size_t desync_tls_random_sni(char *buf, size_t buf_sz)
+{
+    static const char alnum[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+    static const char *const tlds[] = { "com", "org", "net", "ru" };
+
+    if (buf == NULL || buf_sz < 16) {
+        return 0;
+    }
+    size_t label = 6 + (esp_random() % 13); /* 6..18 characters */
+    if (label + 6 >= buf_sz) {
+        label = buf_sz - 6;
+    }
+
+    size_t p = 0;
+    for (size_t i = 0; i < label; i++) {
+        buf[p++] = alnum[esp_random() % (sizeof(alnum) - 1)];
+    }
+    buf[p++] = '.';
+    const char *tld = tlds[esp_random() % (sizeof(tlds) / sizeof(tlds[0]))];
+    size_t tld_len = strlen(tld);
+    memcpy(buf + p, tld, tld_len);
+    p += tld_len;
+    buf[p] = 0;
+    return p;
+}
+
 int desync_tls_find_sni(const uint8_t *buf, size_t len, size_t *sni_off, size_t *sni_len)
 {
     *sni_off = 0;
@@ -182,8 +208,9 @@ size_t desync_tls_build_fake(uint8_t *out, size_t out_sz, const char *sni,
     body[ext_len_pos] = (uint8_t)(ext_len >> 8);
     body[ext_len_pos + 1] = (uint8_t)(ext_len & 0xff);
 
-    size_t hs_len = p + 4;
-    if (out_sz < 5 + hs_len) {
+    size_t hs_len = p;        /* handshake body length (no 4-byte header) */
+    size_t rec_len = p + 4;   /* TLS record payload: handshake header + body */
+    if (out_sz < 5 + rec_len) {
         return 0;
     }
 
@@ -191,8 +218,8 @@ size_t desync_tls_build_fake(uint8_t *out, size_t out_sz, const char *sni,
     out[q++] = 0x16;
     out[q++] = 0x03;
     out[q++] = 0x01;
-    out[q++] = (uint8_t)(hs_len >> 8);
-    out[q++] = (uint8_t)(hs_len & 0xff);
+    out[q++] = (uint8_t)(rec_len >> 8);
+    out[q++] = (uint8_t)(rec_len & 0xff);
     out[q++] = 0x01;
     out[q++] = (uint8_t)(hs_len >> 16);
     out[q++] = (uint8_t)(hs_len >> 8);

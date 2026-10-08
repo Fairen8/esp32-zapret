@@ -53,7 +53,6 @@ jobs:
     needs: [ tests, check ]
     if: github.event_name == 'push' && needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: write
       id-token: write
@@ -117,7 +116,7 @@ jobs:
           set -euo pipefail
           pkg="pkg/esp32-zapret"
           mkdir -p "$pkg/firmware"
-          for f in main components tests tools docs README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults .gitignore .gitattributes; do
+          for f in main components tests tools docs README.md README.en.md INSTALL_RU.md CHANGELOG.md DISCLAIMER.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md LICENSE VERSION CMakeLists.txt sdkconfig.defaults sdkconfig.defaults.esp32c3 sdkconfig.defaults.esp32s3 .gitignore .gitattributes; do
             cp -r "$f" "$pkg/"
           done
           python3 - <<'PY'
@@ -168,15 +167,20 @@ jobs:
           {
             printf 'esp32-zapret firmware (v%s)\n' "$VERSION"
             printf 'Built by GitHub Actions from tag v%s.\n\n' "$VERSION"
-            printf 'WARNING: builds use placeholder credentials (empty Wi-Fi/token).\n'
-            printf 'Build from source with your own main/secrets.h for real use - see INSTALL_RU.md.\n\n'
+            printf 'FIRST BOOT: the device starts a setup access point:\n'
+            printf '  SSID:     esp32-zapret-XXXX (XXXX from the MAC)\n'
+            printf '  password: zapret12345 (CONFIG_APP_WEB_PASSWORD)\n'
+            printf 'Connect to it and open http://192.168.4.1 to set Wi-Fi, the bot\n'
+            printf 'token and the Wake-on-LAN target. No ESP-IDF install needed.\n'
+            printf 'Change the web/setup password during provisioning.\n\n'
             printf 'Variants:\n'
             printf '  esp32/        - ESP32 (WROOM-32), Telegram bot\n'
             printf '  esp32s3/      - ESP32-S3, Telegram bot\n'
             printf '  esp32c3/      - ESP32-C3, Telegram bot\n'
             printf '  esp32-nobot/  - ESP32, no Telegram bot (periodic TLS self-test)\n\n'
-            printf 'Each directory contains the individual binaries and a flash.bat\n'
-            printf 'plus esp32-zapret-merged.bin (flash at 0x0 with any ESP flash tool).\n'
+            printf 'Each directory contains the individual binaries and a flash.bat.\n'
+            printf 'Flash esp32-zapret-merged.bin at 0x0 with any ESP flash tool\n'
+            printf '(esptool, Flash Download Tool, ESP Web Tools) or run flash.bat.\n'
           } > "$pkg/firmware/README.txt"
           (cd pkg && zip -r "../esp32-zapret-v${VERSION}.zip" esp32-zapret)
 
@@ -197,7 +201,7 @@ jobs:
           if [ ! -s notes.md ]; then
             echo "Release v${VERSION}" > notes.md
           fi
-          printf '\n---\nFirmware variants: esp32, esp32s3, esp32c3, esp32 (no bot).\nRelease firmware assets are built with placeholder credentials.\nBuild from source with your own secrets.h for real use (see INSTALL_RU.md).\n' >> notes.md
+          printf '\n---\nFirmware variants: esp32, esp32s3, esp32c3, esp32 (no bot).\nOn first boot the device starts a setup access point (esp32-zapret-XXXX,\npassword zapret12345): connect and open http://192.168.4.1 to set Wi-Fi,\nthe bot token and the Wake-on-LAN target. No toolchain required.\n' >> notes.md
 
       - name: Create and push tag
         run: |
@@ -221,3 +225,28 @@ jobs:
             "fw/esp32-zapret-esp32-nobot-merged.bin" \
             "esp32-zapret-v${VERSION}.zip" \
             "esp32-zapret-v${VERSION}.intoto.jsonl"
+
+  component:
+    name: publish esp_desync
+    needs: [ check, release ]
+    if: github.event_name == 'push' && needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for the registry token
+        id: token
+        run: echo "present=${{ secrets.IDF_COMPONENT_API_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish esp_desync to the ESP Component Registry
+        if: steps.token.outputs.present == 'true'
+        uses: espressif/upload-components-ci-action@355b0bb4d41e94edbec03d08c0ba0c11bbc4834d # v2
+        with:
+          components: components/esp_desync
+          namespace: fairen8
+          version: ${{ needs.check.outputs.version }}
+          api_token: ${{ secrets.IDF_COMPONENT_API_TOKEN }}

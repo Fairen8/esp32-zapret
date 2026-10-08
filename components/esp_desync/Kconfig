@@ -14,6 +14,7 @@ menu "esp_desync anti-DPI"
             FAKE        - send decoy ClientHello via raw IP with low TTL, then real
             FAKE_SPLIT  - FAKE + SPLIT (recommended default)
             TLSREC      - split ClientHello into two TLS records
+            SEQOVL      - inject the fake shifted back so it overlaps the head
     config ESP_DESYNC_MODE_OFF
         bool "OFF"
     config ESP_DESYNC_MODE_SPLIT
@@ -26,6 +27,8 @@ menu "esp_desync anti-DPI"
         bool "FAKE_SPLIT"
     config ESP_DESYNC_MODE_TLSREC
         bool "TLSREC"
+    config ESP_DESYNC_MODE_SEQOVL
+        bool "SEQOVL"
     endchoice
 
     config ESP_DESYNC_FAKE_SNI
@@ -70,6 +73,8 @@ menu "esp_desync anti-DPI"
             BADSUM - broken TCP checksum; home routers with conntrack
                      checksum verification usually drop the packet too.
             BADSEQ - sequence number pushed out of window.
+            TS     - TCP timestamps option with a random value (can be
+                     combined with TTL via /fool or the web UI).
 
     config ESP_DESYNC_FOOLING_TTL
         bool "TTL"
@@ -79,10 +84,17 @@ menu "esp_desync anti-DPI"
         bool "BADSUM"
     config ESP_DESYNC_FOOLING_BADSEQ
         bool "BADSEQ"
+    config ESP_DESYNC_FOOLING_TS
+        bool "TS"
     endchoice
 
     config ESP_DESYNC_BADSEQ_OFFSET
         int "BADSEQ sequence offset"
         default -10000
+
+    config ESP_DESYNC_SEQOVL_LEN
+        int "SEQOVL: bytes to shift the fake sequence number back"
+        range 1 512
+        default 32
 
 endmenu

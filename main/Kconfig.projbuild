@@ -34,6 +34,45 @@ menu "esp32-zapret application"
         bool "DNS-over-HTTPS fallback resolver (Cloudflare/Google)"
         default y
 
+    config APP_SNTP_SERVERS
+        string "SNTP servers (comma-separated, tried in order)"
+        default "pool.ntp.org,time.google.com,time.cloudflare.com"
+        help
+            Up to CONFIG_LWIP_SNTP_MAX_SERVERS entries are used. Extra
+            entries are ignored; a single unreachable server no longer
+            blocks the clock forever.
+
+    config APP_SNTP_TIMEOUT_S
+        int "Seconds to wait for SNTP before falling back to the build timestamp"
+        default 90
+        range 10 3600
+        help
+            After this timeout the firmware sets the clock from its own
+            build date/time so TLS can start even when NTP is blocked.
+
+    config APP_WEB_UI
+        bool "Web UI (setup access point and settings page)"
+        default y
+        help
+            HTTP server for first-time provisioning and for changing
+            settings at runtime. When the device is not configured, it
+            starts its own Wi-Fi access point (no HTTP auth needed, the AP
+            is password protected). Once provisioned, the same page is
+            served on the local network behind HTTP Basic auth (user
+            "admin", password = web password).
+
+    config APP_WEB_PASSWORD
+        string "Default setup/web password (at least 8 characters)"
+        default "zapret12345"
+        help
+            WPA2 password of the setup access point and the HTTP Basic
+            password of the settings page. Can be changed in the web UI or
+            over the serial console; stored in NVS.
+
+    config APP_SETUP_AP_PREFIX
+        string "Setup access point name prefix"
+        default "esp32-zapret"
+
     config APP_STATS_DEFAULT_ON
         bool "Anonymous statistics enabled by default (voluntary)"
         default n

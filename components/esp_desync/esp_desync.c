@@ -68,12 +68,82 @@ static const esp_desync_config_t s_default = {
     .split_pos2 = -1,
     .op_delay_ms = CONFIG_ESP_DESYNC_OP_DELAY_MS,
     .repeats = CONFIG_ESP_DESYNC_FAKE_REPEATS,
+    .rndsni = false,
+    .multi_sni = false,
+    .seqovl_len = CONFIG_ESP_DESYNC_SEQOVL_LEN,
 };
 
 static esp_desync_config_t s_cfg;
 static bool s_inited;
-static desync_flow_t s_flow;
-static int s_pending_fd = -1;
+
+/* One armed flow per connection instead of a single global one: several
+ * sockets (bot + scanner + web-triggered scan) can be open at the same time,
+ * each gets its own desync state. */
+#define DESYNC_MAX_FLOWS 4
+
+typedef struct {
+    int fd; /* -1 = free */
+    desync_flow_t flow;
+} desync_flow_slot_t;
+
+static desync_flow_slot_t s_flows[DESYNC_MAX_FLOWS];
+static bool s_flows_init;
+
+static void flows_init(void)
+{
+    if (s_flows_init) {
+        return;
+    }
+    for (int i = 0; i < DESYNC_MAX_FLOWS; i++) {
+        s_flows[i].fd = -1;
+    }
+    s_flows_init = true;
+}
+
+static desync_flow_slot_t *flow_slot_for_fd(int fd)
+{
+    flows_init();
+    for (int i = 0; i < DESYNC_MAX_FLOWS; i++) {
+        if (s_flows[i].fd == fd) {
+            return &s_flows[i];
+        }
+    }
+    return NULL;
+}
+
+static desync_flow_slot_t *flow_slot_arm(int fd, uint32_t dst_ip, uint16_t dst_port,
+                                         uint16_t src_port)
+{
+    flows_init();
+    desync_flow_slot_t *slot = flow_slot_for_fd(fd);
+    if (slot == NULL) {
+        for (int i = 0; i < DESYNC_MAX_FLOWS; i++) {
+            if (s_flows[i].fd < 0) {
+                slot = &s_flows[i];
+                break;
+            }
+        }
+    }
+    if (slot == NULL) {
+        /* Table full: evict round-robin. The evicted connection is not
+         * closed, it just loses its desync arming. */
+        static uint8_t victim;
+        slot = &s_flows[victim++ % DESYNC_MAX_FLOWS];
+    }
+    slot->fd = fd;
+    slot->flow.dst_ip = dst_ip;
+    slot->flow.dst_port = dst_port;
+    slot->flow.src_port = src_port;
+    return slot;
+}
+
+static void flow_slot_disarm(int fd)
+{
+    desync_flow_slot_t *slot = flow_slot_for_fd(fd);
+    if (slot != NULL) {
+        slot->fd = -1;
+    }
+}
 
 static ssize_t send_all(int fd, const uint8_t *buf, size_t len)
 {
@@ -155,7 +225,20 @@ static ssize_t tlsrec_send(int fd, const uint8_t *hello, size_t len, int p1, uns
     return (ssize_t)len;
 }
 
-static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
+/* With multi_sni the first fake keeps the configured SNI and the following
+ * ones rotate through widely-allowed decoy domains. */
+static const char *multi_decoy(const char *primary, uint8_t i)
+{
+    static const char *const decoys[] = {
+        "www.iana.org", "www.yandex.ru", "mail.ru", "www.google.com",
+    };
+    if (i == 0 || primary == NULL) {
+        return primary;
+    }
+    return decoys[(i - 1) % (sizeof(decoys) / sizeof(decoys[0]))];
+}
+
+static ssize_t apply_desync(int fd, const desync_flow_t *flow, const uint8_t *hello, size_t len)
 {
     const esp_desync_config_t *c = &s_cfg;
     size_t sni_off = 0;
@@ -197,27 +280,38 @@ static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
     case ESP_DESYNC_MODE_FAKE:
     case ESP_DESYNC_MODE_FAKE_SPLIT: {
         uint8_t fake[DESYNC_FAKE_MAX];
-        size_t fl = desync_tls_build_fake(fake, sizeof(fake), c->fake_sni, hello, len, true);
+        char rnd_sni[32];
         uint32_t snd = 0;
         uint32_t rcv = 0;
-        if (fl > 0 && desync_pcb_get_state(s_flow.src_port, s_flow.dst_port, &snd, &rcv) == 0) {
+        if (desync_pcb_get_state(flow->src_port, flow->dst_port, &snd, &rcv) != 0) {
+            ESP_LOGW(TAG, "no PCB state for fake, skipping");
+        } else {
             for (uint8_t i = 0; i < c->repeats; i++) {
-                if (desync_inject_tcp(s_flow.dst_ip, s_flow.src_port, s_flow.dst_port,
+                const char *sni = c->fake_sni;
+                if (c->rndsni && desync_tls_random_sni(rnd_sni, sizeof(rnd_sni)) > 0) {
+                    sni = rnd_sni;
+                } else if (c->multi_sni) {
+                    sni = multi_decoy(c->fake_sni, i);
+                }
+                size_t fl = desync_tls_build_fake(fake, sizeof(fake), sni, hello, len, true);
+                if (fl == 0) {
+                    ESP_LOGW(TAG, "failed to build the fake hello");
+                    break;
+                }
+                if (desync_inject_tcp(flow->dst_ip, flow->src_port, flow->dst_port,
                                       snd, rcv, fake, fl, c->fooling, c->fake_ttl,
                                       c->badseq_offset) != 0) {
                     ESP_LOGW(TAG, "fake injection failed");
                     break;
                 }
+                ESP_LOGI(TAG, "fake %u/%u sent: sni=%s len=%u ttl=%u fool=0x%x",
+                         (unsigned)(i + 1), (unsigned)c->repeats, sni, (unsigned)fl,
+                         (unsigned)((c->fooling & ESP_DESYNC_FOOL_TTL) ? c->fake_ttl : 64),
+                         (unsigned)c->fooling);
             }
-            ESP_LOGI(TAG, "fake sent: sni=%s len=%u ttl=%u fool=0x%x",
-                     c->fake_sni, (unsigned)fl,
-                     (unsigned)((c->fooling & ESP_DESYNC_FOOL_TTL) ? c->fake_ttl : 64),
-                     (unsigned)c->fooling);
             if (c->op_delay_ms) {
                 vTaskDelay(pdMS_TO_TICKS(c->op_delay_ms));
             }
-        } else {
-            ESP_LOGW(TAG, "no PCB state for fake, skipping");
         }
         if (c->mode == ESP_DESYNC_MODE_FAKE) {
             return send_all(fd, hello, len);
@@ -225,12 +319,39 @@ static ssize_t apply_desync(int fd, const uint8_t *hello, size_t len)
         return send_seg(fd, hello, len, p1, p2, c->op_delay_ms);
     }
 
+    case ESP_DESYNC_MODE_SEQOVL: {
+        uint8_t fake[DESYNC_FAKE_MAX];
+        char rnd_sni[32];
+        uint32_t snd = 0;
+        uint32_t rcv = 0;
+        if (desync_pcb_get_state(flow->src_port, flow->dst_port, &snd, &rcv) != 0) {
+            ESP_LOGW(TAG, "no PCB state for seqovl, sending plain");
+        } else {
+            const char *sni = c->fake_sni;
+            if (c->rndsni && desync_tls_random_sni(rnd_sni, sizeof(rnd_sni)) > 0) {
+                sni = rnd_sni;
+            }
+            size_t fl = desync_tls_build_fake(fake, sizeof(fake), sni, hello, len, true);
+            uint16_t overlap = c->seqovl_len > 0 ? (uint16_t)c->seqovl_len : 32;
+            if (fl > 0 && desync_inject_tcp(flow->dst_ip, flow->src_port, flow->dst_port,
+                                            snd - overlap, rcv, fake, fl, c->fooling,
+                                            c->fake_ttl, c->badseq_offset) == 0) {
+                ESP_LOGI(TAG, "seqovl fake sent: overlap=%u sni=%s len=%u fool=0x%x",
+                         (unsigned)overlap, sni, (unsigned)fl, (unsigned)c->fooling);
+            }
+            if (c->op_delay_ms) {
+                vTaskDelay(pdMS_TO_TICKS(c->op_delay_ms));
+            }
+        }
+        return send_all(fd, hello, len);
+    }
+
     case ESP_DESYNC_MODE_DISORDER: {
         uint32_t snd = 0;
         uint32_t rcv = 0;
-        if (desync_pcb_get_state(s_flow.src_port, s_flow.dst_port, &snd, &rcv) == 0) {
+        if (desync_pcb_get_state(flow->src_port, flow->dst_port, &snd, &rcv) == 0) {
             size_t tail = len - (size_t)p1;
-            if (desync_inject_tcp(s_flow.dst_ip, s_flow.src_port, s_flow.dst_port,
+            if (desync_inject_tcp(flow->dst_ip, flow->src_port, flow->dst_port,
                                   snd + (uint32_t)p1, rcv, hello + p1, tail,
                                   ESP_DESYNC_FOOL_NONE, 64, 0) == 0) {
                 if (c->op_delay_ms) {
@@ -259,10 +380,10 @@ esp_err_t esp_desync_init(const esp_desync_config_t *cfg)
     if (s_cfg.fake_sni == NULL) {
         s_cfg.fake_sni = s_default.fake_sni;
     }
-    s_flow.dst_ip = 0;
-    s_flow.src_port = 0;
-    s_flow.dst_port = 0;
-    s_pending_fd = -1;
+    flows_init();
+    for (int i = 0; i < DESYNC_MAX_FLOWS; i++) {
+        s_flows[i].fd = -1;
+    }
     s_inited = true;
 
     ESP_LOGI(TAG, "init: mode=%s sni=%s ttl=%u fool=0x%x delay=%ums",
@@ -284,7 +405,7 @@ void esp_desync_set_config(const esp_desync_config_t *cfg)
         return;
     }
     esp_desync_config_t c = *cfg;
-    if ((int)c.mode < 0 || c.mode > ESP_DESYNC_MODE_TLSREC) {
+    if ((int)c.mode < 0 || c.mode > ESP_DESYNC_MODE_SEQOVL) {
         c.mode = s_cfg.mode;
     }
     if (c.fake_sni == NULL) {
@@ -358,13 +479,11 @@ static int connect_sockaddr(const char *host, const struct sockaddr_in *dst, int
         return -1;
     }
 
-    s_flow.dst_ip = dst->sin_addr.s_addr;
-    s_flow.dst_port = ntohs(dst->sin_port);
-    s_flow.src_port = ntohs(local.sin_port);
-    s_pending_fd = fd;
+    desync_flow_slot_t *slot = flow_slot_arm(fd, dst->sin_addr.s_addr,
+                                             ntohs(dst->sin_port), ntohs(local.sin_port));
 
-    ESP_LOGD(TAG, "connected %s:%u lport=%u", host, (unsigned)s_flow.dst_port,
-             (unsigned)s_flow.src_port);
+    ESP_LOGD(TAG, "connected %s:%u lport=%u", host, (unsigned)slot->flow.dst_port,
+             (unsigned)slot->flow.src_port);
     return fd;
 }
 
@@ -439,9 +558,11 @@ ssize_t esp_desync_write(int fd, const void *data, size_t len)
 {
     const uint8_t *p = (const uint8_t *)data;
 
-    if (fd == s_pending_fd && len >= 44 && p[0] == 0x16 && p[1] == 0x03 && p[5] == 0x01) {
-        s_pending_fd = -1;
-        ssize_t r = apply_desync(fd, p, len);
+    desync_flow_slot_t *slot = flow_slot_for_fd(fd);
+    if (slot != NULL && len >= 44 && p[0] == 0x16 && p[1] == 0x03 && p[5] == 0x01) {
+        desync_flow_t flow = slot->flow;
+        slot->fd = -1; /* arm only the first ClientHello of this connection */
+        ssize_t r = apply_desync(fd, &flow, p, len);
         if (r >= 0) {
             return r;
         }
@@ -480,9 +601,7 @@ ssize_t esp_desync_read(int fd, void *buf, size_t len)
 
 void esp_desync_close(int fd)
 {
-    if (fd == s_pending_fd) {
-        s_pending_fd = -1;
-    }
+    flow_slot_disarm(fd);
     close(fd);
 }
 
@@ -495,6 +614,7 @@ const char *esp_desync_mode_name(esp_desync_mode_t mode)
     case ESP_DESYNC_MODE_FAKE: return "fake";
     case ESP_DESYNC_MODE_FAKE_SPLIT: return "fake_split";
     case ESP_DESYNC_MODE_TLSREC: return "tlsrec";
+    case ESP_DESYNC_MODE_SEQOVL: return "seqovl";
     default: return "?";
     }
 }
@@ -516,6 +636,7 @@ esp_desync_mode_t esp_desync_mode_from_name(const char *name, bool *ok)
     if (strcmp(name, "fake") == 0) return ESP_DESYNC_MODE_FAKE;
     if (strcmp(name, "fake_split") == 0) return ESP_DESYNC_MODE_FAKE_SPLIT;
     if (strcmp(name, "tlsrec") == 0) return ESP_DESYNC_MODE_TLSREC;
+    if (strcmp(name, "seqovl") == 0) return ESP_DESYNC_MODE_SEQOVL;
     if (ok) {
         *ok = false;
     }
