@@ -1,4 +1,4 @@
-version: "1.3.0"
+version: "1.4.0"
 description: "Anti-DPI TLS ClientHello desync for ESP32: zapret-style fake/split/disorder/tlsrec/seqovl with TTL/MD5SIG/BADSUM/BADSEQ/DATANOACK/TS fooling and rndsni on top of LwIP."
 url: "https://github.com/Fairen8/esp32-zapret"
 repository: "https://github.com/Fairen8/esp32-zapret.git"

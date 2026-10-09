@@ -386,6 +386,9 @@ static long ka_header_long(const char *hdr, const char *name)
     return strtol(p, NULL, 10);
 }
 
+static int ka_read_response(https_conn_t *c, char *resp, size_t resp_sz, int timeout_ms,
+                            int *http_status, bool *conn_alive);
+
 int https_request_ka(https_conn_t *c, const char *path, const char *accept,
                      char *resp, size_t resp_sz, int timeout_ms,
                      int *http_status, bool *conn_alive)
@@ -414,7 +417,48 @@ int https_request_ka(https_conn_t *c, const char *path, const char *accept,
     if (ssl_write_all(&c->ssl, req, (size_t)rl, timeout_ms) != 0) {
         return -1;
     }
+    return ka_read_response(c, resp, resp_sz, timeout_ms, http_status, conn_alive);
+}
 
+int https_post_json_ka(https_conn_t *c, const char *path, const char *json,
+                       int timeout_ms, int *http_status, bool *conn_alive)
+{
+    if (http_status) {
+        *http_status = 0;
+    }
+    if (conn_alive) {
+        *conn_alive = false;
+    }
+    if (json == NULL) {
+        return -1;
+    }
+
+    size_t body_len = strlen(json);
+    char hdr[320];
+    int hl = snprintf(hdr, sizeof(hdr),
+                      "POST %s HTTP/1.1\r\n"
+                      "Host: %s\r\n"
+                      "User-Agent: " FW_USER_AGENT "\r\n"
+                      "Accept: application/json\r\n"
+                      "Content-Type: application/json\r\n"
+                      "Content-Length: %u\r\n"
+                      "Connection: keep-alive\r\n\r\n",
+                      path, c->host, (unsigned)body_len);
+    if (hl <= 0 || hl >= (int)sizeof(hdr)) {
+        return -1;
+    }
+    if (ssl_write_all(&c->ssl, hdr, (size_t)hl, timeout_ms) != 0 ||
+        ssl_write_all(&c->ssl, json, body_len, timeout_ms) != 0) {
+        return -1;
+    }
+
+    char discard[64];
+    return ka_read_response(c, discard, sizeof(discard), timeout_ms, http_status, conn_alive);
+}
+
+static int ka_read_response(https_conn_t *c, char *resp, size_t resp_sz, int timeout_ms,
+                            int *http_status, bool *conn_alive)
+{
     ka_reader_t rd;
     memset(&rd, 0, sizeof(rd));
     rd.c = c;

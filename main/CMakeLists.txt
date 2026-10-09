@@ -17,6 +17,7 @@ idf_component_register(
         "doh_parse.c"
         "https_client.c"
         "net_utils.c"
+        "net_scan.c"
         "scan_candidates.c"
         "stats.c"
         "stats_payload.c"
