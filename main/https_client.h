@@ -47,6 +47,15 @@ int https_connect(https_conn_t *c, const char *host, const uint32_t *ips_be, int
 int https_request(https_conn_t *c, const char *path, const char *accept,
                   char *resp, size_t resp_sz, int timeout_ms, int *http_status);
 
+/* HTTP/1.1 GET with Connection: keep-alive for a long-lived session (Telegram).
+ * Parses the response framing (Content-Length or chunked); the body is copied
+ * up to resp_sz-1 bytes (the rest is drained so the connection stays usable).
+ * Returns body bytes (>=0) or -1 on error/timeout; *conn_alive tells the
+ * caller whether the session may be reused. */
+int https_request_ka(https_conn_t *c, const char *path, const char *accept,
+                     char *resp, size_t resp_sz, int timeout_ms,
+                     int *http_status, bool *conn_alive);
+
 /* HTTP/1.1 POST with an application/json body (Connection: close). Returns the
  * response length (>0) or -1; fills http_status when non-NULL. The response
  * body is only used to parse the status line, so a small buffer is enough. */

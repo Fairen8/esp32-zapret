@@ -371,16 +371,32 @@ static bool rate_limit_ok(void)
     return ++count <= CMD_RATE_LIMIT_PER_MIN;
 }
 
+static const char HELP_TEXT[] =
+    "esp32-zapret — обход DPI для Telegram\n"
+    "\n"
+    "/status - состояние устройства\n"
+    "/wake [mac] - Wake-on-LAN пакет\n"
+    "/scan - перебрать стратегии заново\n"
+    "/strategy - текущая стратегия и статистика\n"
+    "/desync <режим> - off|split|disorder|fake|fake_split|tlsrec|seqovl\n"
+    "/ttl <n> - TTL фейка (подбирайте 3..8)\n"
+    "/fool <метод> - ttl|md5sig|badsum|badseq|datanoack|ts|none\n"
+    "/rndsni on|off - случайный decoy SNI\n"
+    "/stats on|off - анонимная статистика\n"
+    "/heap - память, /ip - сеть, /reboot - перезагрузка\n"
+    "\n"
+    "Ручные /desync,/ttl,/fool действуют до /scan или серии сбоев.";
+
 static void handle_update(const tg_update_t *u)
 {
     const app_settings_t *settings = app_settings_get();
 
     if (settings->tg_admin_id != 0 && u->chat_id != settings->tg_admin_id) {
-        tg_send_message(u->chat_id, "access denied");
+        tg_send_message(u->chat_id, "доступ запрещён");
         return;
     }
     if (!rate_limit_ok()) {
-        tg_send_message(u->chat_id, "too many commands, try again in a minute");
+        tg_send_message(u->chat_id, "слишком много команд, подождите минуту");
         return;
     }
 
@@ -388,16 +404,19 @@ static void handle_update(const tg_update_t *u)
     const char *text = u->text;
     const char *args;
 
-    if ((args = cmd_args(text, "wake")) != NULL || (args = cmd_args(text, "wol")) != NULL) {
+    if (cmd_args(text, "start") != NULL || cmd_args(text, "help") != NULL) {
+        tg_send_message(u->chat_id, HELP_TEXT);
+
+    } else if ((args = cmd_args(text, "wake")) != NULL || (args = cmd_args(text, "wol")) != NULL) {
         char macbuf[24];
         strlcpy(macbuf, settings->wol_mac, sizeof(macbuf));
         if (args[0]) {
             copy_token(args, macbuf, sizeof(macbuf));
         }
         if (wol_send(macbuf, settings->wol_broadcast, settings->wol_port) == 0) {
-            snprintf(reply, sizeof(reply), "magic packet sent to %s", macbuf);
+            snprintf(reply, sizeof(reply), "WoL-пакет отправлен: %s", macbuf);
         } else {
-            snprintf(reply, sizeof(reply), "WoL failed, bad MAC? %s", macbuf);
+            snprintf(reply, sizeof(reply), "WoL не сработал, проверьте MAC: %s", macbuf);
         }
         tg_send_message(u->chat_id, reply);
 
@@ -415,12 +434,12 @@ static void handle_update(const tg_update_t *u)
                 c.mode = m;
                 esp_desync_set_config(&c);
                 scan_set_manual(true);
-                snprintf(reply, sizeof(reply), "desync mode: %s (manual)", esp_desync_mode_name(m));
+                snprintf(reply, sizeof(reply), "режим: %s (ручной)", esp_desync_mode_name(m));
             } else {
-                snprintf(reply, sizeof(reply), "unknown mode, use: off split disorder fake fake_split tlsrec seqovl");
+                snprintf(reply, sizeof(reply), "неизвестный режим, доступно: off split disorder fake fake_split tlsrec seqovl");
             }
         } else {
-            snprintf(reply, sizeof(reply), "usage: /desync <off|split|disorder|fake|fake_split|tlsrec|seqovl>");
+            snprintf(reply, sizeof(reply), "использование: /desync <off|split|disorder|fake|fake_split|tlsrec|seqovl>");
         }
         tg_send_message(u->chat_id, reply);
 
@@ -432,9 +451,9 @@ static void handle_update(const tg_update_t *u)
             c.fake_ttl = (uint8_t)v;
             esp_desync_set_config(&c);
             scan_set_manual(true);
-            snprintf(reply, sizeof(reply), "fake TTL = %d (manual)", v);
+            snprintf(reply, sizeof(reply), "TTL фейка = %d (ручной)", v);
         } else {
-            snprintf(reply, sizeof(reply), "usage: /ttl <1..255>, try 3..8");
+            snprintf(reply, sizeof(reply), "использование: /ttl <1..255>, попробуйте 3..8");
         }
         tg_send_message(u->chat_id, reply);
 
@@ -460,14 +479,14 @@ static void handle_update(const tg_update_t *u)
             c.fooling = f;
             esp_desync_set_config(&c);
             scan_set_manual(true);
-            snprintf(reply, sizeof(reply), "fooling: %s (manual)", name[0] ? name : "ttl");
+            snprintf(reply, sizeof(reply), "фулинг: %s (ручной)", name[0] ? name : "ttl");
         } else {
-            snprintf(reply, sizeof(reply), "usage: /fool ttl|md5sig|badsum|badseq|datanoack|ts|none");
+            snprintf(reply, sizeof(reply), "использование: /fool ttl|md5sig|badsum|badseq|datanoack|ts|none");
         }
         tg_send_message(u->chat_id, reply);
 
     } else if (cmd_args(text, "heap") != NULL) {
-        snprintf(reply, sizeof(reply), "heap free %u, min ever %u, largest block %u",
+        snprintf(reply, sizeof(reply), "heap: свободно %u, минимум %u, крупнейший блок %u",
                  (unsigned)esp_get_free_heap_size(),
                  (unsigned)esp_get_minimum_free_heap_size(),
                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
@@ -486,12 +505,12 @@ static void handle_update(const tg_update_t *u)
         wifi_ap_record_t ap;
         memset(&ap, 0, sizeof(ap));
         esp_wifi_sta_get_ap_info(&ap);
-        snprintf(reply, sizeof(reply), "ip %s, gw %s\nssid %s, rssi %d",
+        snprintf(reply, sizeof(reply), "ip %s, шлюз %s\nssid %s, rssi %d",
                  ips, gws, ap.ssid[0] ? (const char *)ap.ssid : "-", ap.rssi);
         tg_send_message(u->chat_id, reply);
 
     } else if (cmd_args(text, "reboot") != NULL) {
-        tg_send_message(u->chat_id, "rebooting...");
+        tg_send_message(u->chat_id, "перезагружаюсь...");
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
 
@@ -503,23 +522,23 @@ static void handle_update(const tg_update_t *u)
         esp_desync_config_t c;
         esp_desync_get_config(&c);
         if (name[0] == 0) {
-            snprintf(reply, sizeof(reply), "rndsni: %s", c.rndsni ? "on" : "off");
+            snprintf(reply, sizeof(reply), "rndsni: %s", c.rndsni ? "вкл" : "выкл");
         } else if (strcmp(name, "on") == 0 || strcmp(name, "off") == 0) {
             c.rndsni = strcmp(name, "on") == 0;
             esp_desync_set_config(&c);
             scan_set_manual(true);
-            snprintf(reply, sizeof(reply), "rndsni: %s (manual)", name);
+            snprintf(reply, sizeof(reply), "rndsni: %s (ручной)", name);
         } else {
-            snprintf(reply, sizeof(reply), "usage: /rndsni on|off");
+            snprintf(reply, sizeof(reply), "использование: /rndsni on|off");
         }
         tg_send_message(u->chat_id, reply);
 
     } else if (cmd_args(text, "scan") != NULL) {
-        tg_send_message(u->chat_id, "scanning strategies, up to a minute...");
+        tg_send_message(u->chat_id, "перебираю стратегии, до минуты...");
         int rc = scan_find_working();
         scan_status_t st;
         scan_get_status(&st);
-        snprintf(reply, sizeof(reply), rc == 0 ? "strategy: %s (auto)" : "scan failed, staying on: %s",
+        snprintf(reply, sizeof(reply), rc == 0 ? "стратегия: %s (авто)" : "не нашёл рабочей, остаюсь на: %s",
                  st.strategy);
         tg_send_message(u->chat_id, reply);
 
@@ -527,9 +546,9 @@ static void handle_update(const tg_update_t *u)
         scan_status_t st;
         scan_get_status(&st);
         snprintf(reply, sizeof(reply),
-                 "strategy %s%s\nscans %u, probes %u, fails %u",
-                 st.have ? st.strategy : "(none)",
-                 st.manual ? " (manual)" : " (auto)",
+                 "стратегия: %s (%s)\nпереборов %u, проб %u, ошибок %u",
+                 st.have ? st.strategy : "(нет)",
+                 st.manual ? "ручная" : "авто",
                  (unsigned)st.scans, (unsigned)st.probes, (unsigned)st.probe_fails);
         tg_send_message(u->chat_id, reply);
 
@@ -539,17 +558,17 @@ static void handle_update(const tg_update_t *u)
             copy_token(args, arg, sizeof(arg));
         }
         if (arg[0] == 0) {
-            snprintf(reply, sizeof(reply), "anonymous statistics: %s",
-                     stats_anon_enabled() ? "on" : "off");
+            snprintf(reply, sizeof(reply), "анонимная статистика: %s",
+                     stats_anon_enabled() ? "вкл" : "выкл");
         } else if (strcmp(arg, "on") == 0) {
             stats_anon_set_enabled(true);
             stats_anon_report("manual");
-            snprintf(reply, sizeof(reply), "anonymous statistics: on");
+            snprintf(reply, sizeof(reply), "анонимная статистика: вкл");
         } else if (strcmp(arg, "off") == 0) {
             stats_anon_set_enabled(false);
-            snprintf(reply, sizeof(reply), "anonymous statistics: off");
+            snprintf(reply, sizeof(reply), "анонимная статистика: выкл");
         } else {
-            snprintf(reply, sizeof(reply), "usage: /stats on|off");
+            snprintf(reply, sizeof(reply), "использование: /stats on|off");
         }
         tg_send_message(u->chat_id, reply);
 
@@ -562,7 +581,7 @@ static void handle_update(const tg_update_t *u)
         esp_desync_get_config(&c);
         scan_get_status(&st);
         snprintf(reply, sizeof(reply),
-                 "uptime %llds, heap %u, rssi %d\nmode %s, ttl %u, fool 0x%x, rndsni %s\nbypass %s (%s)\ntg %s (last HTTP %d)",
+                 "аптайм %lldс, heap %u, rssi %d\nрежим %s, ttl %u, fool 0x%x, rndsni %s\nобход %s (%s)\ntg %s (HTTP %d)",
                  (long long)(esp_timer_get_time() / 1000000),
                  (unsigned)esp_get_free_heap_size(), ap.rssi,
                  esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl, (unsigned)c.fooling,
@@ -572,21 +591,7 @@ static void handle_update(const tg_update_t *u)
         tg_send_message(u->chat_id, reply);
 
     } else {
-        tg_send_message(u->chat_id,
-                        "esp32-zapret\n"
-                        "/wake [mac] - send Wake-on-LAN magic packet\n"
-                        "/status - device state\n"
-                        "/desync <mode> - off|split|disorder|fake|fake_split|tlsrec|seqovl\n"
-                        "/ttl <n> - fake packet TTL (tune 3..8)\n"
-                        "/fool <mode> - ttl|md5sig|badsum|badseq|datanoack|ts|none\n"
-                        "/rndsni on|off - random decoy SNI for every fake\n"
-                        "/heap - free/min/largest heap block\n"
-                        "/ip - current IP, gateway, SSID and RSSI\n"
-                        "/reboot - restart the device\n"
-                        "/scan - re-run strategy auto-detection (drops manual tuning)\n"
-                        "/strategy - show current strategy and stats\n"
-                        "/stats on|off - anonymous statistics (optional)\n"
-                        "manual /desync,/ttl,/fool persist until /scan or repeated failures");
+        tg_send_message(u->chat_id, HELP_TEXT);
     }
 }
 #endif /* CONFIG_APP_ENABLE_TELEGRAM_BOT */

@@ -4,6 +4,19 @@
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.3.0] - 2026-10-09
+
+### Изменено
+- **Производительность**: бот держит постоянное keep-alive TLS-соединение —
+  `getUpdates` и ответы больше не платят за TCP+TLS handshake (1–3 с на
+  каждый запрос на классическом ESP32); `TCP_NODELAY` на всех соединениях
+  через esp_desync; вся прошивка собирается с `-O2`
+  (`CONFIG_COMPILER_OPTIMIZATION_PERF`); ожидание данных в TLS-циклах больше
+  не крутит CPU вхолостую.
+- Бот: `getUpdates` запрашивает только сообщения (`allowed_updates=message`),
+  один раз за загрузку регистрируется меню команд (`setMyCommands`),
+  добавлены `/start` и `/help`, ответы переведены на русский.
+
 ## [1.2.1] - 2026-10-09
 
 ### Исправлено

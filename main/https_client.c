@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_timer.h"
@@ -120,6 +121,7 @@ int https_connect_ex(https_conn_t *c, const char *host, const uint32_t *ips_be, 
                 stats_anon_note_err(0x0002);
                 goto fail;
             }
+            vTaskDelay(1);
             continue;
         }
         ESP_LOGW(TAG, "handshake failed via %s: -0x%04x", c->endpoint, (unsigned)-ret);
@@ -198,6 +200,7 @@ static int read_response(https_conn_t *c, char *resp, size_t resp_sz, int timeou
             if (esp_timer_get_time() > deadline) {
                 break;
             }
+            vTaskDelay(1); /* do not spin the CPU while the peer is idle */
             continue;
         }
         break;
@@ -280,6 +283,263 @@ void https_close(https_conn_t *c)
     mbedtls_ssl_config_free(&c->conf);
     mbedtls_ctr_drbg_free(&c->drbg);
     mbedtls_entropy_free(&c->entropy);
+}
+
+/* --- Keep-alive session reader (Telegram) --- */
+
+typedef struct {
+    https_conn_t *c;
+    unsigned char carry[512];
+    size_t carry_len;
+    size_t carry_pos;
+    int64_t deadline;
+    bool peer_closed;
+} ka_reader_t;
+
+/* Case-insensitive substring search (newlib may lack strcasestr). */
+static const char *ci_find(const char *hay, const char *needle)
+{
+    size_t nl = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nl && p[i] != 0 &&
+               tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) {
+            i++;
+        }
+        if (i == nl) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+/* Returns buffered bytes; 0 = nothing yet (already delayed), -1 = error. */
+static int ka_read(ka_reader_t *r, char *dst, size_t len)
+{
+    if (r->carry_pos < r->carry_len) {
+        size_t c = r->carry_len - r->carry_pos;
+        if (c > len) {
+            c = len;
+        }
+        memcpy(dst, (char *)r->carry + r->carry_pos, c);
+        r->carry_pos += c;
+        return (int)c;
+    }
+    int n = mbedtls_ssl_read(&r->c->ssl, r->carry, sizeof(r->carry));
+    if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        if (esp_timer_get_time() > r->deadline) {
+            return -1; /* timeout: caller drops the session */
+        }
+        vTaskDelay(1); /* do not spin the CPU while the peer is idle */
+        return 0;
+    }
+    if (n <= 0) {
+        r->peer_closed = true;
+        return -1;
+    }
+    r->carry_len = (size_t)n;
+    r->carry_pos = 0;
+    size_t c = (size_t)n > len ? len : (size_t)n;
+    memcpy(dst, r->carry, c);
+    r->carry_pos = c;
+    return (int)c;
+}
+
+static int ka_read_exact(ka_reader_t *r, char *dst, size_t len)
+{
+    size_t got = 0;
+    while (got < len) {
+        int n = ka_read(r, dst + got, len - got);
+        if (n > 0) {
+            got += (size_t)n;
+        } else if (n < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int ka_read_byte(ka_reader_t *r)
+{
+    char ch;
+    while (1) {
+        int n = ka_read(r, &ch, 1);
+        if (n == 1) {
+            return (unsigned char)ch;
+        }
+        if (n < 0) {
+            return -1;
+        }
+    }
+}
+
+static long ka_header_long(const char *hdr, const char *name)
+{
+    const char *p = ci_find(hdr, name);
+    if (p == NULL) {
+        return -1;
+    }
+    p += strlen(name);
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    return strtol(p, NULL, 10);
+}
+
+int https_request_ka(https_conn_t *c, const char *path, const char *accept,
+                     char *resp, size_t resp_sz, int timeout_ms,
+                     int *http_status, bool *conn_alive)
+{
+    if (http_status) {
+        *http_status = 0;
+    }
+    if (conn_alive) {
+        *conn_alive = false;
+    }
+    if (resp == NULL || resp_sz == 0) {
+        return -1;
+    }
+
+    char req[1600];
+    int rl = snprintf(req, sizeof(req),
+                      "GET %s HTTP/1.1\r\n"
+                      "Host: %s\r\n"
+                      "User-Agent: " FW_USER_AGENT "\r\n"
+                      "Accept: %s\r\n"
+                      "Connection: keep-alive\r\n\r\n",
+                      path, c->host, accept ? accept : "application/json");
+    if (rl <= 0 || rl >= (int)sizeof(req)) {
+        return -1;
+    }
+    if (ssl_write_all(&c->ssl, req, (size_t)rl, timeout_ms) != 0) {
+        return -1;
+    }
+
+    ka_reader_t rd;
+    memset(&rd, 0, sizeof(rd));
+    rd.c = c;
+    rd.deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+
+    /* Response head. */
+    char hdr[640];
+    size_t hn = 0;
+    while (hn < sizeof(hdr) - 1) {
+        int ch = ka_read_byte(&rd);
+        if (ch < 0) {
+            return -1;
+        }
+        hdr[hn++] = (char)ch;
+        if (hn >= 4 && hdr[hn - 4] == '\r' && hdr[hn - 3] == '\n' &&
+            hdr[hn - 2] == '\r' && hdr[hn - 1] == '\n') {
+            break;
+        }
+    }
+    hdr[hn] = 0;
+
+    int status = parse_http_status(hdr);
+    if (http_status) {
+        *http_status = status;
+    }
+
+    bool close_hdr = ci_find(hdr, "\r\nconnection: close") != NULL;
+    bool chunked = ci_find(hdr, "\r\ntransfer-encoding: chunked") != NULL;
+    long clen = ka_header_long(hdr, "\r\ncontent-length:");
+
+    size_t pos = 0;
+    char sink[64];
+
+    if (chunked) {
+        while (1) {
+            char line[24];
+            size_t ln = 0;
+            int ch;
+            while ((ch = ka_read_byte(&rd)) >= 0 && ch != '\n') {
+                if (ch != '\r' && ln < sizeof(line) - 1) {
+                    line[ln++] = (char)ch;
+                }
+            }
+            if (ch < 0) {
+                return -1;
+            }
+            line[ln] = 0;
+            unsigned long sz = strtoul(line, NULL, 16);
+            if (sz == 0) {
+                /* Trailer section: read lines until an empty one. */
+                while (1) {
+                    char tline[4];
+                    size_t tl = 0;
+                    int tc;
+                    while ((tc = ka_read_byte(&rd)) >= 0 && tc != '\n') {
+                        if (tc != '\r' && tl < sizeof(tline) - 1) {
+                            tline[tl++] = (char)tc;
+                        }
+                    }
+                    if (tc < 0) {
+                        return -1;
+                    }
+                    if (tl == 0) {
+                        break;
+                    }
+                }
+                break;
+            }
+            size_t take = sz;
+            if (take > resp_sz - 1 - pos) {
+                take = resp_sz - 1 - pos;
+            }
+            if (take && ka_read_exact(&rd, resp + pos, take) != 0) {
+                return -1;
+            }
+            pos += take;
+            size_t rest = sz - take;
+            while (rest) {
+                size_t cc = rest > sizeof(sink) ? sizeof(sink) : rest;
+                if (ka_read_exact(&rd, sink, cc) != 0) {
+                    return -1;
+                }
+                rest -= cc;
+            }
+            char crlf[2];
+            if (ka_read_exact(&rd, crlf, 2) != 0) {
+                return -1;
+            }
+        }
+    } else if (clen >= 0) {
+        size_t total = (size_t)clen;
+        size_t take = total > resp_sz - 1 ? resp_sz - 1 : total;
+        if (take && ka_read_exact(&rd, resp, take) != 0) {
+            return -1;
+        }
+        pos = take;
+        size_t rest = total - take;
+        while (rest) {
+            size_t cc = rest > sizeof(sink) ? sizeof(sink) : rest;
+            if (ka_read_exact(&rd, sink, cc) != 0) {
+                return -1;
+            }
+            rest -= cc;
+        }
+    } else {
+        /* No framing headers: read until the peer closes (drop the session). */
+        close_hdr = true;
+        while (pos + 1 < resp_sz) {
+            int n = ka_read(&rd, resp + pos, resp_sz - 1 - pos);
+            if (n > 0) {
+                pos += (size_t)n;
+                continue;
+            }
+            if (n == 0) {
+                continue; /* waiting for data */
+            }
+            break;
+        }
+    }
+
+    resp[pos] = 0;
+    if (conn_alive) {
+        *conn_alive = !close_hdr && !rd.peer_closed;
+    }
+    return (int)pos;
 }
 
 const char *https_endpoint(const https_conn_t *c)

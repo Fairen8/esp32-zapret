@@ -18,6 +18,10 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# Performance: whole-firmware -O2 (TLS handshakes and JSON are CPU-bound on the
+# classic ESP32; the debug build used -Og).
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
 # Anonymous statistics: on by default (disable with /stats off or in the web UI)
 CONFIG_APP_STATS_DEFAULT_ON=y
 
