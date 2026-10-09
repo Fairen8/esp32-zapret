@@ -92,6 +92,10 @@ with full control over seq/ack/TTL/checksum.
 | `tlsrec` | `tlsrec` (tpws) | rewrites the ClientHello into two TLS records so the DPI cannot reassemble the SNI |
 | `seqovl` | `seqovl` | fake with the sequence shifted back, overlapping the stream head (`CONFIG_ESP_DESYNC_SEQOVL_LEN`, 32 bytes by default) |
 
+Desync is applied only to hosts in the allowlist (default `api.telegram.org`,
+configurable via `CONFIG_ESP_DESYNC_HOSTS`): statistics, DoH and the web UI go
+out as plain TLS, so an active bypass strategy cannot break them.
+
 Fake fooling methods: `TTL` (default), `MD5SIG` (Linux servers silently drop a
 packet with the TCP MD5 option), `BADSUM` (does not pass home NATs with conntrack
 checksum validation), `BADSEQ` (pushes seq out of the window), `DATANOACK` (no

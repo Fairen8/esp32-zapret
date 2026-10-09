@@ -15,6 +15,8 @@
 #include "esp_random.h"
 #include "mbedtls/md.h"
 #include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #if defined(CONFIG_SOC_TEMP_SENSOR_SUPPORTED) && CONFIG_SOC_TEMP_SENSOR_SUPPORTED
 #include "driver/temperature_sensor.h"
 #endif
@@ -65,6 +67,10 @@ static err_slot_t s_errs[ERR_SLOTS];
 
 static unsigned char s_seed[16];
 static bool s_seed_ok;
+
+/* Serializes report building/sending: the web UI task can trigger a manual
+ * report while the main loop is in a periodic tick. */
+static SemaphoreHandle_t s_lock;
 
 #if defined(CONFIG_SOC_TEMP_SENSOR_SUPPORTED) && CONFIG_SOC_TEMP_SENSOR_SUPPORTED
 static temperature_sensor_handle_t s_temp;
@@ -180,6 +186,9 @@ static void boot_ring_check(void)
 
 void stats_anon_init(void)
 {
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
     nvs_handle_t h;
     bool have_pref = false;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
@@ -453,7 +462,7 @@ static bool connect_stats(https_conn_t *conn)
     return false;
 }
 
-static void send_report(const char *event)
+static void send_report_locked(const char *event)
 {
     stats_payload_t p;
     collect(&p, event);
@@ -477,6 +486,17 @@ static void send_report(const char *event)
         ESP_LOGD(TAG, "report sent (%s)", event);
     } else {
         ESP_LOGD(TAG, "report not sent: HTTP %d", status);
+    }
+}
+
+static void send_report(const char *event)
+{
+    if (s_lock != NULL) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+    }
+    send_report_locked(event);
+    if (s_lock != NULL) {
+        xSemaphoreGive(s_lock);
     }
 }
 

@@ -39,6 +39,15 @@ menu "esp_desync anti-DPI"
             zapret's built-in default. If it ever gets blocked, change
             to any popular non-blocked domain of your ISP.
 
+    config ESP_DESYNC_HOSTS
+        string "Hosts the desync is applied to"
+        default "api.telegram.org"
+        help
+            Comma-separated host list; an entry matches exactly or as a
+            domain suffix, "*" matches every host. All other connections
+            (statistics, DoH, web UI clients) go out as plain TLS, so the
+            bypass strategy cannot break them on the local network.
+
     config ESP_DESYNC_FAKE_TTL
         int "TTL for injected fake packets"
         range 1 255

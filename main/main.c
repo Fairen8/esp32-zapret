@@ -41,6 +41,24 @@ static int s_disconnects;
 static int64_t s_sntp_start_us;
 static wifi_config_t s_sta_cfg;
 
+/* DHCP-failure AP search: with multi-radio SSIDs the driver may associate to
+ * a repeater that never relays DHCP. After repeated timeouts the device scans
+ * for other radios of the same SSID and tries them one by one. */
+#define WIFI_BSSID_CAND_MAX 8
+typedef struct {
+    uint8_t bssid[6];
+    uint8_t channel;
+} wifi_bssid_cand_t;
+
+static uint8_t s_dhcp_fails;
+static bool s_bssid_scan_running;
+static bool s_ap_search;
+static wifi_bssid_cand_t s_candidates[WIFI_BSSID_CAND_MAX];
+static int s_cand_count;
+static int s_cand_idx;
+static uint8_t s_last_bssid[6];
+static bool s_last_bssid_valid;
+
 static void sntp_start(void);
 
 static void wifi_reconnect_cb(void *arg)
@@ -49,10 +67,62 @@ static void wifi_reconnect_cb(void *arg)
     esp_wifi_connect();
 }
 
+/* Blocking scan must run in its own task: from the esp_timer callback
+ * esp_wifi_scan_start(..., true) fails with ESP_ERR_WIFI_TIMEOUT. */
+static void bssid_scan_task(void *arg)
+{
+    (void)arg;
+    wifi_scan_config_t sc = {0};
+    sc.ssid = s_sta_cfg.sta.ssid;
+    sc.show_hidden = false;
+
+    wifi_ap_record_t recs[WIFI_BSSID_CAND_MAX];
+    uint16_t want = WIFI_BSSID_CAND_MAX;
+    if (esp_wifi_scan_start(&sc, true) == ESP_OK &&
+        esp_wifi_scan_get_ap_records(&want, recs) == ESP_OK) {
+        s_cand_count = 0;
+        for (int i = 0; i < want && s_cand_count < WIFI_BSSID_CAND_MAX; i++) {
+            if (s_last_bssid_valid && memcmp(recs[i].bssid, s_last_bssid, 6) == 0) {
+                continue; /* the radio that just failed DHCP */
+            }
+            memcpy(s_candidates[s_cand_count].bssid, recs[i].bssid, 6);
+            s_candidates[s_cand_count].channel = recs[i].primary;
+            s_cand_count++;
+        }
+        s_cand_idx = 0;
+        ESP_LOGI(TAG, "AP scan for %s: %d alternate radio(s)",
+                 (const char *)s_sta_cfg.sta.ssid, s_cand_count);
+    } else {
+        ESP_LOGW(TAG, "AP scan failed");
+    }
+    s_bssid_scan_running = false;
+    vTaskDelete(NULL);
+}
+
 static void dhcp_timeout_cb(void *arg)
 {
     (void)arg;
-    ESP_LOGW(TAG, "DHCP timed out, reconnecting");
+    s_dhcp_fails++;
+    ESP_LOGW(TAG, "DHCP timed out (%u in a row), reconnecting", (unsigned)s_dhcp_fails);
+
+    if (s_cand_idx < s_cand_count) {
+        const wifi_bssid_cand_t *cand = &s_candidates[s_cand_idx++];
+        memcpy(s_sta_cfg.sta.bssid, cand->bssid, sizeof(s_sta_cfg.sta.bssid));
+        s_sta_cfg.sta.bssid_set = true;
+        s_sta_cfg.sta.channel = cand->channel;
+        esp_wifi_set_config(WIFI_IF_STA, &s_sta_cfg);
+        ESP_LOGW(TAG, "trying alternate AP %02x:%02x:%02x:%02x:%02x:%02x (ch %u)",
+                 cand->bssid[0], cand->bssid[1], cand->bssid[2],
+                 cand->bssid[3], cand->bssid[4], cand->bssid[5],
+                 (unsigned)cand->channel);
+    } else if (s_dhcp_fails >= 2 && !s_bssid_scan_running) {
+        s_ap_search = true;
+        s_bssid_scan_running = true;
+        if (xTaskCreate(bssid_scan_task, "bssid_scan", 4096, NULL, 4, NULL) != pdPASS) {
+            s_bssid_scan_running = false;
+            ESP_LOGW(TAG, "cannot start AP scan task");
+        }
+    }
     esp_wifi_disconnect();
 }
 
@@ -63,6 +133,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        wifi_ap_record_t ap;
+        memset(&ap, 0, sizeof(ap));
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            memcpy(s_last_bssid, ap.bssid, sizeof(s_last_bssid));
+            s_last_bssid_valid = true;
+        } else if (s_sta_cfg.sta.bssid_set) {
+            memcpy(s_last_bssid, s_sta_cfg.sta.bssid, sizeof(s_last_bssid));
+            s_last_bssid_valid = true;
+        }
         if (!app_settings_get()->net_static && s_dhcp_timer != NULL) {
             esp_timer_stop(s_dhcp_timer);
             esp_timer_start_once(s_dhcp_timer, 15 * 1000 * 1000);
@@ -75,9 +154,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             esp_timer_stop(s_dhcp_timer);
         }
         s_disconnects++;
-        if (s_disconnects >= 3 && app_settings_get()->wifi_bssid_set) {
+        if (s_disconnects >= 3 && app_settings_get()->wifi_bssid_set && !s_ap_search) {
             /* The pinned radio is not working (moved AP, multi-radio SSID,
-             * DHCP broken): drop the pin and let the driver pick again. */
+             * DHCP broken): drop the pin and let the driver pick again.
+             * While the AP-search is running the device manages the BSSID
+             * itself, do not fight it. */
             ESP_LOGW(TAG, "connection keeps failing, clearing BSSID pin");
             app_settings_clear_bssid();
             s_sta_cfg.sta.bssid_set = false;
@@ -97,6 +178,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
         s_connected = true;
         s_disconnects = 0;
+        s_dhcp_fails = 0;
+        s_cand_count = 0;
+        s_cand_idx = 0;
+        s_ap_search = false;
         if (s_dhcp_timer != NULL) {
             esp_timer_stop(s_dhcp_timer);
         }

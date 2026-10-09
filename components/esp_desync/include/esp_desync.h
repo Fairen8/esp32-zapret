@@ -46,6 +46,10 @@ typedef struct {
     /* seqovl: how many bytes to shift the fake sequence number back
      * (0 = default 32). */
     int16_t  seqovl_len;
+    /* Comma-separated host allowlist the desync is applied to; other
+     * destinations connect as plain TLS. Entries match exactly or as a
+     * domain suffix; "*" matches everything; NULL = build default. */
+    const char *desync_hosts;
 } esp_desync_config_t;
 
 esp_err_t esp_desync_init(const esp_desync_config_t *cfg);

@@ -12,11 +12,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "desync_internal.h"
+#include "desync_hosts.h"
 
 static const char *TAG = "desync";
 
 #ifndef CONFIG_ESP_DESYNC_FAKE_SNI
 #define CONFIG_ESP_DESYNC_FAKE_SNI "www.iana.org"
+#endif
+#ifndef CONFIG_ESP_DESYNC_HOSTS
+#define CONFIG_ESP_DESYNC_HOSTS "api.telegram.org"
 #endif
 #ifndef CONFIG_ESP_DESYNC_FAKE_TTL
 #define CONFIG_ESP_DESYNC_FAKE_TTL 3
@@ -71,6 +75,7 @@ static const esp_desync_config_t s_default = {
     .rndsni = false,
     .multi_sni = false,
     .seqovl_len = CONFIG_ESP_DESYNC_SEQOVL_LEN,
+    .desync_hosts = CONFIG_ESP_DESYNC_HOSTS,
 };
 
 static esp_desync_config_t s_cfg;
@@ -380,6 +385,9 @@ esp_err_t esp_desync_init(const esp_desync_config_t *cfg)
     if (s_cfg.fake_sni == NULL) {
         s_cfg.fake_sni = s_default.fake_sni;
     }
+    if (s_cfg.desync_hosts == NULL) {
+        s_cfg.desync_hosts = s_default.desync_hosts;
+    }
     flows_init();
     for (int i = 0; i < DESYNC_MAX_FLOWS; i++) {
         s_flows[i].fd = -1;
@@ -410,6 +418,9 @@ void esp_desync_set_config(const esp_desync_config_t *cfg)
     }
     if (c.fake_sni == NULL) {
         c.fake_sni = s_cfg.fake_sni;
+    }
+    if (c.desync_hosts == NULL) {
+        c.desync_hosts = s_cfg.desync_hosts;
     }
     if (c.repeats < 1) {
         c.repeats = 1;
@@ -479,11 +490,16 @@ static int connect_sockaddr(const char *host, const struct sockaddr_in *dst, int
         return -1;
     }
 
-    desync_flow_slot_t *slot = flow_slot_arm(fd, dst->sin_addr.s_addr,
-                                             ntohs(dst->sin_port), ntohs(local.sin_port));
-
-    ESP_LOGD(TAG, "connected %s:%u lport=%u", host, (unsigned)slot->flow.dst_port,
-             (unsigned)slot->flow.src_port);
+    if (desync_host_allowed(host, s_cfg.desync_hosts)) {
+        flow_slot_arm(fd, dst->sin_addr.s_addr, ntohs(dst->sin_port), ntohs(local.sin_port));
+        ESP_LOGD(TAG, "connected %s:%u lport=%u (desync armed)", host,
+                 (unsigned)ntohs(dst->sin_port), (unsigned)ntohs(local.sin_port));
+    } else {
+        /* Plain TLS for everything outside the allowlist (statistics, DoH,
+         * other services): the bypass strategy must not break them. */
+        ESP_LOGD(TAG, "connected %s:%u lport=%u (desync skipped)",
+                 host, (unsigned)ntohs(dst->sin_port), (unsigned)ntohs(local.sin_port));
+    }
     return fd;
 }
 

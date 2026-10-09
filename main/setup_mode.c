@@ -206,8 +206,13 @@ static void start_console(void)
     for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
         esp_console_cmd_register(&cmds[i]);
     }
-    /* This IDF starts the REPL task inside esp_console_new_repl_xxx(). */
-    (void)repl;
+
+    /* The REPL task created by esp_console_new_repl_* waits for this call;
+     * without it the console never reads input. */
+    esp_err_t serr = esp_console_start_repl(repl);
+    if (serr != ESP_OK) {
+        ESP_LOGW(TAG, "serial console start failed: %s", esp_err_to_name(serr));
+    }
 }
 
 void setup_mode_run(void)
