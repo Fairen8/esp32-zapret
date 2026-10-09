@@ -491,6 +491,9 @@ static void send_report_locked(const char *event)
 
 static void send_report(const char *event)
 {
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
     if (s_lock != NULL) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
     }

@@ -98,10 +98,10 @@ Release archives contain per-target directories (`esp32/`, `esp32s3/`,
 `esp32c3/`, `esp32-nobot/`) with individual binaries, a `flash.bat` and a merged
 image (`esp32-zapret-merged.bin`, flash at `0x0`).
 
-> **Note:** the merged image (and `flash.bat`) includes a blank NVS partition,
+> **Note:** the merged image covers the whole flash with a blank NVS partition,
 > so flashing it over a configured device **wipes Wi-Fi, bot token and WoL
-> settings**. To keep the configuration, update only the application binary
-> (`esp32-zapret.bin` at `0x10000`).
+> settings**. `flash.bat` and flashing individual binaries keep NVS intact; to
+> update without a reset, write only `esp32-zapret.bin` at `0x10000`.
 
 Since v1.1.0 no toolchain is needed: on first boot the device starts a setup
 access point `esp32-zapret-XXXX` (password `zapret12345`). Connect to it, open

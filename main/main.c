@@ -58,12 +58,17 @@ static int s_cand_count;
 static int s_cand_idx;
 static uint8_t s_last_bssid[6];
 static bool s_last_bssid_valid;
+static int64_t s_last_scan_us;
 
 static void sntp_start(void);
 
 static void wifi_reconnect_cb(void *arg)
 {
     (void)arg;
+    if (s_bssid_scan_running) {
+        /* The AP scan task resumes the connection attempts when done. */
+        return;
+    }
     esp_wifi_connect();
 }
 
@@ -72,6 +77,10 @@ static void wifi_reconnect_cb(void *arg)
 static void bssid_scan_task(void *arg)
 {
     (void)arg;
+    /* Let esp_wifi_disconnect() settle: scanning while still associated
+     * fails with ESP_ERR_WIFI_STATE. */
+    vTaskDelay(pdMS_TO_TICKS(300));
+
     wifi_scan_config_t sc = {0};
     sc.ssid = s_sta_cfg.sta.ssid;
     sc.show_hidden = false;
@@ -96,6 +105,14 @@ static void bssid_scan_task(void *arg)
         ESP_LOGW(TAG, "AP scan failed");
     }
     s_bssid_scan_running = false;
+
+    /* Connection attempts were suppressed while the scan was running. */
+    if (s_reconnect_timer != NULL) {
+        esp_timer_stop(s_reconnect_timer);
+        esp_timer_start_once(s_reconnect_timer, 300 * 1000);
+    } else {
+        esp_wifi_connect();
+    }
     vTaskDelete(NULL);
 }
 
@@ -115,9 +132,12 @@ static void dhcp_timeout_cb(void *arg)
                  cand->bssid[0], cand->bssid[1], cand->bssid[2],
                  cand->bssid[3], cand->bssid[4], cand->bssid[5],
                  (unsigned)cand->channel);
-    } else if (s_dhcp_fails >= 2 && !s_bssid_scan_running) {
+    } else if (s_dhcp_fails >= 2 && !s_bssid_scan_running &&
+               (s_last_scan_us == 0 ||
+                esp_timer_get_time() - s_last_scan_us > 60 * 1000000)) {
         s_ap_search = true;
         s_bssid_scan_running = true;
+        s_last_scan_us = esp_timer_get_time();
         if (xTaskCreate(bssid_scan_task, "bssid_scan", 4096, NULL, 4, NULL) != pdPASS) {
             s_bssid_scan_running = false;
             ESP_LOGW(TAG, "cannot start AP scan task");
