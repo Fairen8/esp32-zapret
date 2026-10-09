@@ -211,6 +211,10 @@ an external USB-UART bridge (CP210x/CH340) select
 /reboot                     restart the device
 ```
 
+`/start` opens an inline menu: status, scan, strategy, network, memory,
+Wake-on-LAN, settings (mode/TTL/fooling/rndsni/statistics) and a confirmed
+reboot — everything via buttons, screens update in place.
+
 ### Tuning TTL
 
 TTL is the main knob. The fake must reach the DPI but must not reach the server:

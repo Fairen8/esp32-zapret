@@ -56,6 +56,11 @@ int https_request_ka(https_conn_t *c, const char *path, const char *accept,
                      char *resp, size_t resp_sz, int timeout_ms,
                      int *http_status, bool *conn_alive);
 
+/* HTTP/1.1 POST with an application/json body over a keep-alive session.
+ * Same return contract as https_request_ka. */
+int https_post_json_ka(https_conn_t *c, const char *path, const char *json,
+                       int timeout_ms, int *http_status, bool *conn_alive);
+
 /* HTTP/1.1 POST with an application/json body (Connection: close). Returns the
  * response length (>0) or -1; fills http_status when non-NULL. The response
  * body is only used to parse the status line, so a small buffer is enough. */

@@ -356,7 +356,8 @@ static const char *cmd_args(const char *text, const char *name)
     return q;
 }
 
-/* Simple global command rate limit: one chat cannot flood the device. */
+/* ---- Bot UI: inline keyboards and screens ---------------------------- */
+
 #define CMD_RATE_LIMIT_PER_MIN 20
 
 static bool rate_limit_ok(void)
@@ -371,32 +372,424 @@ static bool rate_limit_ok(void)
     return ++count <= CMD_RATE_LIMIT_PER_MIN;
 }
 
-static const char HELP_TEXT[] =
-    "esp32-zapret — обход DPI для Telegram\n"
-    "\n"
-    "/status - состояние устройства\n"
-    "/wake [mac] - Wake-on-LAN пакет\n"
-    "/scan - перебрать стратегии заново\n"
-    "/strategy - текущая стратегия и статистика\n"
-    "/desync <режим> - off|split|disorder|fake|fake_split|tlsrec|seqovl\n"
-    "/ttl <n> - TTL фейка (подбирайте 3..8)\n"
-    "/fool <метод> - ttl|md5sig|badsum|badseq|datanoack|ts|none\n"
-    "/rndsni on|off - случайный decoy SNI\n"
-    "/stats on|off - анонимная статистика\n"
-    "/heap - память, /ip - сеть, /reboot - перезагрузка\n"
-    "\n"
-    "Ручные /desync,/ttl,/fool действуют до /scan или серии сбоев.";
+static void esc_html(const char *src, char *dst, size_t cap)
+{
+    size_t o = 0;
+    for (const char *p = src; *p != 0 && o + 6 < cap; p++) {
+        if (*p == '<') {
+            memcpy(dst + o, "&lt;", 4);
+            o += 4;
+        } else if (*p == '>') {
+            memcpy(dst + o, "&gt;", 4);
+            o += 4;
+        } else if (*p == '&') {
+            memcpy(dst + o, "&amp;", 5);
+            o += 5;
+        } else {
+            dst[o++] = *p;
+        }
+    }
+    dst[o] = 0;
+}
+
+static void fool_str(uint32_t f, char *out, size_t cap)
+{
+    static const struct {
+        uint32_t bit;
+        const char *name;
+    } T[] = {
+        { ESP_DESYNC_FOOL_TTL, "ttl" },
+        { ESP_DESYNC_FOOL_MD5SIG, "md5sig" },
+        { ESP_DESYNC_FOOL_BADSUM, "badsum" },
+        { ESP_DESYNC_FOOL_BADSEQ, "badseq" },
+        { ESP_DESYNC_FOOL_DATANOACK, "datanoack" },
+        { ESP_DESYNC_FOOL_TS, "ts" },
+    };
+    out[0] = 0;
+    for (size_t i = 0; i < sizeof(T) / sizeof(T[0]); i++) {
+        if (f & T[i].bit) {
+            if (out[0]) {
+                strlcat(out, "|", cap);
+            }
+            strlcat(out, T[i].name, cap);
+        }
+    }
+    if (out[0] == 0) {
+        strlcpy(out, "none", cap);
+    }
+}
+
+#define KB_MAIN "{\"inline_keyboard\":[[" \
+    "{\"text\":\"📊 Статус\",\"callback_data\":\"st\"}," \
+    "{\"text\":\"🔁 Скан\",\"callback_data\":\"sc\"}],[" \
+    "{\"text\":\"🧭 Стратегия\",\"callback_data\":\"strat\"}," \
+    "{\"text\":\"🌐 Сеть\",\"callback_data\":\"net\"}],[" \
+    "{\"text\":\"🧠 Память\",\"callback_data\":\"heap\"}," \
+    "{\"text\":\"💤 Wake\",\"callback_data\":\"wake\"}],[" \
+    "{\"text\":\"⚙️ Настройки\",\"callback_data\":\"set\"}," \
+    "{\"text\":\"🔌 Перезагрузка\",\"callback_data\":\"rb\"}]]}"
+
+#define KB_BACK "{\"inline_keyboard\":[[{\"text\":\"🔙 Меню\",\"callback_data\":\"m\"}]]}"
+
+#define KB_STATUS "{\"inline_keyboard\":[[" \
+    "{\"text\":\"🔄 Обновить\",\"callback_data\":\"st\"}," \
+    "{\"text\":\"⚙️ Настройки\",\"callback_data\":\"set\"}],[" \
+    "{\"text\":\"🔙 Меню\",\"callback_data\":\"m\"}]]}"
+
+#define KB_STRAT "{\"inline_keyboard\":[[" \
+    "{\"text\":\"🔁 Скан\",\"callback_data\":\"sc\"}," \
+    "{\"text\":\"🔄 Обновить\",\"callback_data\":\"strat\"}],[" \
+    "{\"text\":\"🔙 Меню\",\"callback_data\":\"m\"}]]}"
+
+#define KB_SET "{\"inline_keyboard\":[[" \
+    "{\"text\":\"off\",\"callback_data\":\"ds:off\"}," \
+    "{\"text\":\"split\",\"callback_data\":\"ds:split\"}," \
+    "{\"text\":\"disorder\",\"callback_data\":\"ds:disorder\"}],[" \
+    "{\"text\":\"fake\",\"callback_data\":\"ds:fake\"}," \
+    "{\"text\":\"fake_split\",\"callback_data\":\"ds:fake_split\"}," \
+    "{\"text\":\"tlsrec\",\"callback_data\":\"ds:tlsrec\"}," \
+    "{\"text\":\"seqovl\",\"callback_data\":\"ds:seqovl\"}],[" \
+    "{\"text\":\"TTL 3\",\"callback_data\":\"ttl:3\"}," \
+    "{\"text\":\"TTL 5\",\"callback_data\":\"ttl:5\"}," \
+    "{\"text\":\"TTL 8\",\"callback_data\":\"ttl:8\"}," \
+    "{\"text\":\"TTL 12\",\"callback_data\":\"ttl:12\"}],[" \
+    "{\"text\":\"TTL -1\",\"callback_data\":\"ttl:-1\"}," \
+    "{\"text\":\"TTL +1\",\"callback_data\":\"ttl:+1\"}," \
+    "{\"text\":\"🎲 rndsni\",\"callback_data\":\"rnd:t\"}," \
+    "{\"text\":\"📊 статистика\",\"callback_data\":\"stat:t\"}],[" \
+    "{\"text\":\"🤡 Фулинг\",\"callback_data\":\"fool\"}," \
+    "{\"text\":\"🔙 Меню\",\"callback_data\":\"m\"}]]}"
+
+#define KB_FOOL "{\"inline_keyboard\":[[" \
+    "{\"text\":\"ttl\",\"callback_data\":\"fl:ttl\"}," \
+    "{\"text\":\"md5sig\",\"callback_data\":\"fl:md5sig\"}," \
+    "{\"text\":\"badsum\",\"callback_data\":\"fl:badsum\"}],[" \
+    "{\"text\":\"badseq\",\"callback_data\":\"fl:badseq\"}," \
+    "{\"text\":\"datanoack\",\"callback_data\":\"fl:datanoack\"}," \
+    "{\"text\":\"ts\",\"callback_data\":\"fl:ts\"}," \
+    "{\"text\":\"none\",\"callback_data\":\"fl:none\"}],[" \
+    "{\"text\":\"🔙 Настройки\",\"callback_data\":\"set\"}]]}"
+
+#define KB_REBOOT "{\"inline_keyboard\":[[" \
+    "{\"text\":\"✅ Перезагрузить\",\"callback_data\":\"rb:y\"}," \
+    "{\"text\":\"❌ Отмена\",\"callback_data\":\"m\"}]]}"
+
+static void bot_screen(const tg_update_t *u, const char *text, const char *kb)
+{
+    if (u->is_callback && u->message_id != 0) {
+        if (tg_edit_menu(u->chat_id, u->message_id, text, kb) == 0) {
+            return;
+        }
+    }
+    tg_send_menu(u->chat_id, text, kb);
+}
+
+static void scr_menu(const tg_update_t *u)
+{
+    esp_desync_config_t c;
+    scan_status_t st;
+    esp_desync_get_config(&c);
+    scan_get_status(&st);
+    char strategy[84];
+    esc_html(st.have ? st.strategy : "—", strategy, sizeof(strategy));
+    char text[512];
+    snprintf(text, sizeof(text),
+             "🛰 <b>esp32-zapret</b> — обход блокировок Telegram\n"
+             "\n"
+             "🎛 Режим: <code>%s</code> · ⏳ TTL <code>%u</code>\n"
+             "🧭 Стратегия: <code>%s</code> (%s)\n"
+             "\n"
+             "Всё управление — кнопками ниже.\n"
+             "Команды тоже работают: /status, /scan, /help.",
+             esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl,
+             strategy, st.manual ? "ручная" : "авто");
+    bot_screen(u, text, KB_MAIN);
+}
+
+static void scr_status(const tg_update_t *u)
+{
+    wifi_ap_record_t ap;
+    esp_desync_config_t c;
+    scan_status_t st;
+    memset(&ap, 0, sizeof(ap));
+    esp_wifi_sta_get_ap_info(&ap);
+    esp_desync_get_config(&c);
+    scan_get_status(&st);
+
+    char ips[16] = "—", gws[16] = "—";
+    esp_netif_ip_info_t ipi;
+    memset(&ipi, 0, sizeof(ipi));
+    esp_netif_t *nif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (nif != NULL && esp_netif_get_ip_info(nif, &ipi) == ESP_OK) {
+        snprintf(ips, sizeof(ips), IPSTR, IP2STR(&ipi.ip));
+        snprintf(gws, sizeof(gws), IPSTR, IP2STR(&ipi.gw));
+    }
+    char ssid[80];
+    esc_html(ap.ssid[0] ? (const char *)ap.ssid : "—", ssid, sizeof(ssid));
+    char strategy[84], fool[48];
+    esc_html(st.have ? st.strategy : "—", strategy, sizeof(strategy));
+    fool_str(c.fooling, fool, sizeof(fool));
+
+    uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000);
+    char text[768];
+    snprintf(text, sizeof(text),
+             "📊 <b>Состояние</b>\n"
+             "\n"
+             "🌐 <code>%s</code> · шлюз <code>%s</code>\n"
+             "📶 %s · %d dBm\n"
+             "🕓 %uч %uм · 🧠 heap %u КБ\n"
+             "🎛 <code>%s</code> · TTL <code>%u</code> · фулинг <code>%s</code> · rndsni %s\n"
+             "🧭 <code>%s</code> (%s) · переборов %u, проб %u, сбоев %u\n"
+             "📡 telegram <code>%s</code> · HTTP %d",
+             ips, gws, ssid, ap.rssi,
+             (unsigned)(up / 3600), (unsigned)((up / 60) % 60),
+             (unsigned)(esp_get_free_heap_size() / 1024),
+             esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl, fool,
+             c.rndsni ? "вкл" : "выкл",
+             strategy, st.manual ? "ручная" : "авто",
+             (unsigned)st.scans, (unsigned)st.probes, (unsigned)st.probe_fails,
+             tg_last_endpoint(), tg_last_http_status());
+    bot_screen(u, text, KB_STATUS);
+}
+
+static void scr_strategy(const tg_update_t *u)
+{
+    scan_status_t st;
+    scan_get_status(&st);
+    char strategy[84];
+    esc_html(st.have ? st.strategy : "не найдена", strategy, sizeof(strategy));
+    char text[400];
+    snprintf(text, sizeof(text),
+             "🧭 <b>Стратегия обхода</b>\n"
+             "\n"
+             "Режим: <code>%s</code> (%s)\n"
+             "Переборов: %u · проб: %u · сбоев: %u",
+             strategy, st.manual ? "ручная" : "авто",
+             (unsigned)st.scans, (unsigned)st.probes, (unsigned)st.probe_fails);
+    bot_screen(u, text, KB_STRAT);
+}
+
+static void scr_net(const tg_update_t *u)
+{
+    wifi_ap_record_t ap;
+    memset(&ap, 0, sizeof(ap));
+    esp_wifi_sta_get_ap_info(&ap);
+    char ips[16] = "—", gws[16] = "—";
+    esp_netif_ip_info_t ipi;
+    memset(&ipi, 0, sizeof(ipi));
+    esp_netif_t *nif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (nif != NULL && esp_netif_get_ip_info(nif, &ipi) == ESP_OK) {
+        snprintf(ips, sizeof(ips), IPSTR, IP2STR(&ipi.ip));
+        snprintf(gws, sizeof(gws), IPSTR, IP2STR(&ipi.gw));
+    }
+    char ssid[80];
+    esc_html(ap.ssid[0] ? (const char *)ap.ssid : "—", ssid, sizeof(ssid));
+    uint8_t ch = 0;
+    wifi_second_chan_t second;
+    esp_wifi_get_channel(&ch, &second);
+    char text[320];
+    snprintf(text, sizeof(text),
+             "🌐 <b>Сеть</b>\n"
+             "\n"
+             "IP <code>%s</code>\n"
+             "шлюз <code>%s</code>\n"
+             "Wi-Fi %s · %d dBm · канал %u",
+             ips, gws, ssid, ap.rssi, (unsigned)ch);
+    bot_screen(u, text, KB_BACK);
+}
+
+static void scr_heap(const tg_update_t *u)
+{
+    char text[256];
+    snprintf(text, sizeof(text),
+             "🧠 <b>Память</b>\n"
+             "\n"
+             "свободно <code>%u</code> Б\n"
+             "минимум <code>%u</code> Б\n"
+             "крупнейший блок <code>%u</code> Б",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)esp_get_minimum_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    bot_screen(u, text, KB_BACK);
+}
+
+static void scr_settings(const tg_update_t *u)
+{
+    esp_desync_config_t c;
+    esp_desync_get_config(&c);
+    char fool[48];
+    fool_str(c.fooling, fool, sizeof(fool));
+    char text[512];
+    snprintf(text, sizeof(text),
+             "⚙️ <b>Настройки обхода</b>\n"
+             "\n"
+             "🎛 Режим <code>%s</code> · ⏳ TTL <code>%u</code>\n"
+             "🤡 Фулинг <code>%s</code>\n"
+             "🎲 rndsni %s · 📊 статистика %s\n"
+             "\n"
+             "Тапни, чтобы изменить:",
+             esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl, fool,
+             c.rndsni ? "вкл" : "выкл",
+             stats_anon_enabled() ? "вкл" : "выкл");
+    bot_screen(u, text, KB_SET);
+}
+
+static void scr_fool(const tg_update_t *u)
+{
+    esp_desync_config_t c;
+    esp_desync_get_config(&c);
+    char fool[48];
+    fool_str(c.fooling, fool, sizeof(fool));
+    char text[320];
+    snprintf(text, sizeof(text),
+             "🤡 <b>Фулинг фейка</b>\n"
+             "\n"
+             "Сейчас: <code>%s</code>\n"
+             "\n"
+             "TTL — самый универсальный; md5sig/badsum/badseq/ts — когда TTL не "
+             "подходит; none — без защиты от «долёта» фейка.",
+             fool);
+    bot_screen(u, text, KB_FOOL);
+}
+
+static void do_scan(const tg_update_t *u)
+{
+    bot_screen(u, "⏳ <b>Перебираю стратегии…</b>\nОбычно 10–60 секунд.", KB_STATUS);
+    int rc = scan_find_working();
+    scan_status_t st;
+    scan_get_status(&st);
+    char strategy[84];
+    esc_html(st.have ? st.strategy : "—", strategy, sizeof(strategy));
+    char text[384];
+    snprintf(text, sizeof(text),
+             rc == 0 ? "✅ <b>Готово</b>\nСтратегия: <code>%s</code>"
+                     : "⚠️ <b>Рабочая стратегия не найдена</b>\nОстаюсь на <code>%s</code>",
+             strategy);
+    bot_screen(u, text, KB_STATUS);
+}
+
+static void do_wake(const tg_update_t *u, const char *mac_arg)
+{
+    const app_settings_t *settings = app_settings_get();
+    char macbuf[24];
+    strlcpy(macbuf, settings->wol_mac, sizeof(macbuf));
+    if (mac_arg != NULL && mac_arg[0]) {
+        copy_token(mac_arg, macbuf, sizeof(macbuf));
+    }
+    char mac_esc[32];
+    esc_html(macbuf, mac_esc, sizeof(mac_esc));
+    char text[192];
+    if (wol_send(macbuf, settings->wol_broadcast, settings->wol_port) == 0) {
+        snprintf(text, sizeof(text), "💤 WoL-пакет отправлен на <code>%s</code>", mac_esc);
+    } else {
+        snprintf(text, sizeof(text), "⚠️ WoL не удался, проверьте MAC: <code>%s</code>", mac_esc);
+    }
+    bot_screen(u, text, KB_BACK);
+}
+
+static void handle_callback(const tg_update_t *u)
+{
+    const char *d = u->callback_data;
+    tg_answer_callback(u->callback_id, NULL);
+
+    if (strcmp(d, "m") == 0) {
+        scr_menu(u);
+    } else if (strcmp(d, "st") == 0) {
+        scr_status(u);
+    } else if (strcmp(d, "strat") == 0) {
+        scr_strategy(u);
+    } else if (strcmp(d, "net") == 0) {
+        scr_net(u);
+    } else if (strcmp(d, "heap") == 0) {
+        scr_heap(u);
+    } else if (strcmp(d, "wake") == 0) {
+        do_wake(u, NULL);
+    } else if (strcmp(d, "sc") == 0) {
+        do_scan(u);
+    } else if (strcmp(d, "set") == 0) {
+        scr_settings(u);
+    } else if (strcmp(d, "fool") == 0) {
+        scr_fool(u);
+    } else if (strcmp(d, "rb") == 0) {
+        bot_screen(u, "🔌 <b>Перезагрузить устройство?</b>", KB_REBOOT);
+    } else if (strcmp(d, "rb:y") == 0) {
+        tg_send_message(u->chat_id, "🔌 Перезагружаюсь…");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+    } else if (strncmp(d, "ds:", 3) == 0) {
+        bool ok = false;
+        esp_desync_mode_t m = esp_desync_mode_from_name(d + 3, &ok);
+        if (ok) {
+            esp_desync_config_t c;
+            esp_desync_get_config(&c);
+            c.mode = m;
+            esp_desync_set_config(&c);
+            scan_set_manual(true);
+        }
+        scr_settings(u);
+    } else if (strncmp(d, "ttl:", 4) == 0) {
+        esp_desync_config_t c;
+        esp_desync_get_config(&c);
+        int v = c.fake_ttl;
+        if (d[4] == '+') {
+            v++;
+        } else if (d[4] == '-') {
+            v--;
+        } else {
+            v = atoi(d + 4);
+        }
+        if (v < 1) {
+            v = 1;
+        }
+        if (v > 255) {
+            v = 255;
+        }
+        c.fake_ttl = (uint8_t)v;
+        esp_desync_set_config(&c);
+        scan_set_manual(true);
+        scr_settings(u);
+    } else if (strncmp(d, "fl:", 3) == 0) {
+        const char *name = d + 3;
+        uint32_t f = ESP_DESYNC_FOOL_NONE;
+        if (strcmp(name, "ttl") == 0) f = ESP_DESYNC_FOOL_TTL;
+        else if (strcmp(name, "md5sig") == 0) f = ESP_DESYNC_FOOL_MD5SIG;
+        else if (strcmp(name, "badsum") == 0) f = ESP_DESYNC_FOOL_BADSUM;
+        else if (strcmp(name, "badseq") == 0) f = ESP_DESYNC_FOOL_BADSEQ;
+        else if (strcmp(name, "datanoack") == 0) f = ESP_DESYNC_FOOL_DATANOACK;
+        else if (strcmp(name, "ts") == 0) f = ESP_DESYNC_FOOL_TS;
+        esp_desync_config_t c;
+        esp_desync_get_config(&c);
+        c.fooling = f;
+        esp_desync_set_config(&c);
+        scan_set_manual(true);
+        scr_fool(u);
+    } else if (strcmp(d, "rnd:t") == 0) {
+        esp_desync_config_t c;
+        esp_desync_get_config(&c);
+        c.rndsni = !c.rndsni;
+        esp_desync_set_config(&c);
+        scan_set_manual(true);
+        scr_settings(u);
+    } else if (strcmp(d, "stat:t") == 0) {
+        stats_anon_set_enabled(!stats_anon_enabled());
+        scr_settings(u);
+    }
+}
 
 static void handle_update(const tg_update_t *u)
 {
     const app_settings_t *settings = app_settings_get();
 
     if (settings->tg_admin_id != 0 && u->chat_id != settings->tg_admin_id) {
-        tg_send_message(u->chat_id, "доступ запрещён");
+        tg_send_message(u->chat_id, "🚫 Доступ запрещён");
         return;
     }
     if (!rate_limit_ok()) {
-        tg_send_message(u->chat_id, "слишком много команд, подождите минуту");
+        tg_send_message(u->chat_id, "⏳ Слишком много команд, подождите минуту");
+        return;
+    }
+    if (u->is_callback) {
+        handle_callback(u);
         return;
     }
 
@@ -404,45 +797,51 @@ static void handle_update(const tg_update_t *u)
     const char *text = u->text;
     const char *args;
 
-    if (cmd_args(text, "start") != NULL || cmd_args(text, "help") != NULL) {
-        tg_send_message(u->chat_id, HELP_TEXT);
-
-    } else if ((args = cmd_args(text, "wake")) != NULL || (args = cmd_args(text, "wol")) != NULL) {
-        char macbuf[24];
-        strlcpy(macbuf, settings->wol_mac, sizeof(macbuf));
-        if (args[0]) {
-            copy_token(args, macbuf, sizeof(macbuf));
-        }
-        if (wol_send(macbuf, settings->wol_broadcast, settings->wol_port) == 0) {
-            snprintf(reply, sizeof(reply), "WoL-пакет отправлен: %s", macbuf);
-        } else {
-            snprintf(reply, sizeof(reply), "WoL не сработал, проверьте MAC: %s", macbuf);
-        }
-        tg_send_message(u->chat_id, reply);
-
+    if (cmd_args(text, "start") != NULL || cmd_args(text, "help") != NULL ||
+        cmd_args(text, "menu") != NULL) {
+        scr_menu(u);
+    } else if (cmd_args(text, "status") != NULL) {
+        scr_status(u);
+    } else if (cmd_args(text, "strategy") != NULL) {
+        scr_strategy(u);
+    } else if (cmd_args(text, "settings") != NULL) {
+        scr_settings(u);
+    } else if (cmd_args(text, "heap") != NULL) {
+        scr_heap(u);
+    } else if (cmd_args(text, "ip") != NULL) {
+        scr_net(u);
+    } else if (cmd_args(text, "scan") != NULL) {
+        do_scan(u);
+    } else if ((args = cmd_args(text, "wake")) != NULL ||
+               (args = cmd_args(text, "wol")) != NULL) {
+        do_wake(u, args);
+    } else if (cmd_args(text, "reboot") != NULL) {
+        bot_screen(u, "🔌 <b>Перезагрузить устройство?</b>", KB_REBOOT);
     } else if ((args = cmd_args(text, "desync")) != NULL) {
         char name[24] = {0};
         if (args[0]) {
             copy_token(args, name, sizeof(name));
         }
-        if (name[0]) {
-            bool ok = false;
-            esp_desync_mode_t m = esp_desync_mode_from_name(name, &ok);
-            if (ok) {
-                esp_desync_config_t c;
-                esp_desync_get_config(&c);
-                c.mode = m;
-                esp_desync_set_config(&c);
-                scan_set_manual(true);
-                snprintf(reply, sizeof(reply), "режим: %s (ручной)", esp_desync_mode_name(m));
-            } else {
-                snprintf(reply, sizeof(reply), "неизвестный режим, доступно: off split disorder fake fake_split tlsrec seqovl");
-            }
+        if (name[0] == 0) {
+            scr_settings(u);
+            return;
+        }
+        if (strcmp(name, "none") == 0) {
+            strlcpy(name, "off", sizeof(name));
+        }
+        bool ok = false;
+        esp_desync_mode_t m = esp_desync_mode_from_name(name, &ok);
+        if (ok) {
+            esp_desync_config_t c;
+            esp_desync_get_config(&c);
+            c.mode = m;
+            esp_desync_set_config(&c);
+            scan_set_manual(true);
+            snprintf(reply, sizeof(reply), "🎛 Режим: <code>%s</code>", esp_desync_mode_name(m));
         } else {
-            snprintf(reply, sizeof(reply), "использование: /desync <off|split|disorder|fake|fake_split|tlsrec|seqovl>");
+            strlcpy(reply, "⚠️ Неизвестный режим. Открой /settings.", sizeof(reply));
         }
         tg_send_message(u->chat_id, reply);
-
     } else if ((args = cmd_args(text, "ttl")) != NULL) {
         int v = args[0] ? atoi(args) : 0;
         if (v >= 1 && v <= 255) {
@@ -451,12 +850,11 @@ static void handle_update(const tg_update_t *u)
             c.fake_ttl = (uint8_t)v;
             esp_desync_set_config(&c);
             scan_set_manual(true);
-            snprintf(reply, sizeof(reply), "TTL фейка = %d (ручной)", v);
+            snprintf(reply, sizeof(reply), "⏳ TTL = <code>%d</code>", v);
         } else {
-            snprintf(reply, sizeof(reply), "использование: /ttl <1..255>, попробуйте 3..8");
+            snprintf(reply, sizeof(reply), "⚠️ Использование: /ttl 1..255 (обычно 3..8)");
         }
         tg_send_message(u->chat_id, reply);
-
     } else if ((args = cmd_args(text, "fool")) != NULL) {
         char name[16] = {0};
         uint32_t f = 0;
@@ -479,41 +877,14 @@ static void handle_update(const tg_update_t *u)
             c.fooling = f;
             esp_desync_set_config(&c);
             scan_set_manual(true);
-            snprintf(reply, sizeof(reply), "фулинг: %s (ручной)", name[0] ? name : "ttl");
+            char fool[48];
+            fool_str(f, fool, sizeof(fool));
+            snprintf(reply, sizeof(reply), "🤡 Фулинг: <code>%s</code>", fool);
         } else {
-            snprintf(reply, sizeof(reply), "использование: /fool ttl|md5sig|badsum|badseq|datanoack|ts|none");
+            snprintf(reply, sizeof(reply),
+                     "⚠️ Использование: /fool ttl|md5sig|badsum|badseq|datanoack|ts|none");
         }
         tg_send_message(u->chat_id, reply);
-
-    } else if (cmd_args(text, "heap") != NULL) {
-        snprintf(reply, sizeof(reply), "heap: свободно %u, минимум %u, крупнейший блок %u",
-                 (unsigned)esp_get_free_heap_size(),
-                 (unsigned)esp_get_minimum_free_heap_size(),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
-        tg_send_message(u->chat_id, reply);
-
-    } else if (cmd_args(text, "ip") != NULL) {
-        esp_netif_ip_info_t ip_info;
-        char ips[16] = "-";
-        char gws[16] = "-";
-        memset(&ip_info, 0, sizeof(ip_info));
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        if (netif != NULL && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-            snprintf(ips, sizeof(ips), IPSTR, IP2STR(&ip_info.ip));
-            snprintf(gws, sizeof(gws), IPSTR, IP2STR(&ip_info.gw));
-        }
-        wifi_ap_record_t ap;
-        memset(&ap, 0, sizeof(ap));
-        esp_wifi_sta_get_ap_info(&ap);
-        snprintf(reply, sizeof(reply), "ip %s, шлюз %s\nssid %s, rssi %d",
-                 ips, gws, ap.ssid[0] ? (const char *)ap.ssid : "-", ap.rssi);
-        tg_send_message(u->chat_id, reply);
-
-    } else if (cmd_args(text, "reboot") != NULL) {
-        tg_send_message(u->chat_id, "перезагружаюсь...");
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
-
     } else if ((args = cmd_args(text, "rndsni")) != NULL) {
         char name[8] = {0};
         if (args[0]) {
@@ -522,78 +893,40 @@ static void handle_update(const tg_update_t *u)
         esp_desync_config_t c;
         esp_desync_get_config(&c);
         if (name[0] == 0) {
-            snprintf(reply, sizeof(reply), "rndsni: %s", c.rndsni ? "вкл" : "выкл");
+            snprintf(reply, sizeof(reply), "🎲 rndsni: %s", c.rndsni ? "вкл" : "выкл");
         } else if (strcmp(name, "on") == 0 || strcmp(name, "off") == 0) {
             c.rndsni = strcmp(name, "on") == 0;
             esp_desync_set_config(&c);
             scan_set_manual(true);
-            snprintf(reply, sizeof(reply), "rndsni: %s (ручной)", name);
+            snprintf(reply, sizeof(reply), "🎲 rndsni: %s", c.rndsni ? "вкл" : "выкл");
         } else {
-            snprintf(reply, sizeof(reply), "использование: /rndsni on|off");
+            snprintf(reply, sizeof(reply), "⚠️ Использование: /rndsni on|off");
         }
         tg_send_message(u->chat_id, reply);
-
-    } else if (cmd_args(text, "scan") != NULL) {
-        tg_send_message(u->chat_id, "перебираю стратегии, до минуты...");
-        int rc = scan_find_working();
-        scan_status_t st;
-        scan_get_status(&st);
-        snprintf(reply, sizeof(reply), rc == 0 ? "стратегия: %s (авто)" : "не нашёл рабочей, остаюсь на: %s",
-                 st.strategy);
-        tg_send_message(u->chat_id, reply);
-
-    } else if (cmd_args(text, "strategy") != NULL) {
-        scan_status_t st;
-        scan_get_status(&st);
-        snprintf(reply, sizeof(reply),
-                 "стратегия: %s (%s)\nпереборов %u, проб %u, ошибок %u",
-                 st.have ? st.strategy : "(нет)",
-                 st.manual ? "ручная" : "авто",
-                 (unsigned)st.scans, (unsigned)st.probes, (unsigned)st.probe_fails);
-        tg_send_message(u->chat_id, reply);
-
     } else if ((args = cmd_args(text, "stats")) != NULL) {
         char arg[8] = {0};
         if (args[0]) {
             copy_token(args, arg, sizeof(arg));
         }
         if (arg[0] == 0) {
-            snprintf(reply, sizeof(reply), "анонимная статистика: %s",
+            snprintf(reply, sizeof(reply), "📊 Анонимная статистика: %s",
                      stats_anon_enabled() ? "вкл" : "выкл");
         } else if (strcmp(arg, "on") == 0) {
             stats_anon_set_enabled(true);
             stats_anon_report("manual");
-            snprintf(reply, sizeof(reply), "анонимная статистика: вкл");
+            snprintf(reply, sizeof(reply), "📊 Анонимная статистика: вкл");
         } else if (strcmp(arg, "off") == 0) {
             stats_anon_set_enabled(false);
-            snprintf(reply, sizeof(reply), "анонимная статистика: выкл");
+            snprintf(reply, sizeof(reply), "📊 Анонимная статистика: выкл");
         } else {
-            snprintf(reply, sizeof(reply), "использование: /stats on|off");
+            snprintf(reply, sizeof(reply), "⚠️ Использование: /stats on|off");
         }
         tg_send_message(u->chat_id, reply);
-
-    } else if (cmd_args(text, "status") != NULL) {
-        wifi_ap_record_t ap;
-        esp_desync_config_t c;
-        scan_status_t st;
-        memset(&ap, 0, sizeof(ap));
-        esp_wifi_sta_get_ap_info(&ap);
-        esp_desync_get_config(&c);
-        scan_get_status(&st);
-        snprintf(reply, sizeof(reply),
-                 "аптайм %lldс, heap %u, rssi %d\nрежим %s, ttl %u, fool 0x%x, rndsni %s\nобход %s (%s)\ntg %s (HTTP %d)",
-                 (long long)(esp_timer_get_time() / 1000000),
-                 (unsigned)esp_get_free_heap_size(), ap.rssi,
-                 esp_desync_mode_name(c.mode), (unsigned)c.fake_ttl, (unsigned)c.fooling,
-                 c.rndsni ? "on" : "off",
-                 st.have ? st.strategy : "(none)", st.manual ? "manual" : "auto",
-                 tg_last_endpoint(), tg_last_http_status());
-        tg_send_message(u->chat_id, reply);
-
     } else {
-        tg_send_message(u->chat_id, HELP_TEXT);
+        scr_menu(u);
     }
 }
+
 #endif /* CONFIG_APP_ENABLE_TELEGRAM_BOT */
 
 void app_main(void)

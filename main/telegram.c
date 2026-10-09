@@ -36,6 +36,7 @@ static const char TG_DEFAULT_IPS[] =
 static char s_resp[RESP_MAX];
 static char s_last_endpoint[16];
 static int s_last_status;
+static char s_req_body[3072];
 
 /* Persistent keep-alive session: without it every poll and every reply paid a
  * full TCP+TLS handshake (1-3 s on classic ESP32). */
@@ -93,9 +94,11 @@ static void tg_set_commands_once(void)
 
     static const char menu[] =
         "{\"commands\":["
+        "{\"command\":\"start\",\"description\":\"меню управления\"},"
         "{\"command\":\"status\",\"description\":\"состояние устройства\"},"
         "{\"command\":\"scan\",\"description\":\"перебрать стратегии заново\"},"
         "{\"command\":\"strategy\",\"description\":\"текущая стратегия и статистика\"},"
+        "{\"command\":\"settings\",\"description\":\"настройки обхода\"},"
         "{\"command\":\"wake\",\"description\":\"Wake-on-LAN пакет\"},"
         "{\"command\":\"desync\",\"description\":\"режим обхода\"},"
         "{\"command\":\"ttl\",\"description\":\"TTL фейка\"},"
@@ -122,39 +125,46 @@ static void tg_set_commands_once(void)
 }
 
 /* Sends a keep-alive request over the session, reconnecting once if the
- * connection died. Returns body bytes or -1. */
-static int tg_session_get(const char *path, char *resp, size_t resp_sz,
-                          int timeout_ms, int *status)
+ * connection died. body == NULL -> GET, otherwise POST JSON. */
+static int tg_session_call(const char *path, const char *body, char *resp,
+                           size_t resp_sz, int timeout_ms, int *status)
 {
-    if (s_sess_open || tg_connect(&s_sess, 8000) == 0) {
-        s_sess_open = true;
-    } else {
-        s_last_status = 0;
-        return -1;
-    }
-
-    bool alive = false;
-    int n = https_request_ka(&s_sess, path, "application/json", resp, resp_sz,
-                             timeout_ms, status, &alive);
-    s_last_status = status ? *status : 0;
-    if (n < 0) {
-        tg_session_close();
-        /* One retry on a fresh connection (the peer may have closed an idle
-         * keep-alive socket while the device was busy scanning). */
-        if (tg_connect(&s_sess, 8000) != 0) {
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (!s_sess_open && tg_connect(&s_sess, 8000) != 0) {
             s_last_status = 0;
             return -1;
         }
         s_sess_open = true;
-        alive = false;
-        n = https_request_ka(&s_sess, path, "application/json", resp, resp_sz,
-                             timeout_ms, status, &alive);
+
+        bool alive = false;
+        int n;
+        if (body != NULL) {
+            n = https_post_json_ka(&s_sess, path, body, timeout_ms, status, &alive);
+        } else {
+            n = https_request_ka(&s_sess, path, "application/json", resp, resp_sz,
+                                 timeout_ms, status, &alive);
+        }
         s_last_status = status ? *status : 0;
-    }
-    if (n < 0 || !alive) {
+        if (n >= 0) {
+            if (!alive) {
+                tg_session_close();
+            }
+            return n;
+        }
         tg_session_close();
     }
-    return n;
+    return -1;
+}
+
+static int tg_session_get(const char *path, char *resp, size_t resp_sz,
+                          int timeout_ms, int *status)
+{
+    return tg_session_call(path, NULL, resp, resp_sz, timeout_ms, status);
+}
+
+static int tg_session_post(const char *path, const char *body, int timeout_ms, int *status)
+{
+    return tg_session_call(path, body, NULL, 0, timeout_ms, status);
 }
 
 static void log_api_error(int status)
@@ -280,7 +290,7 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
     char path[256];
     snprintf(path, sizeof(path),
              "/bot%s/getUpdates?timeout=%d&offset=%lld"
-             "&allowed_updates=%%5B%%22message%%22%%5D",
+             "&allowed_updates=%%5B%%22message%%22%%2C%%22callback_query%%22%%5D",
              settings->tg_token, long_poll_s, (long long)offset);
 
     int status = 0;
@@ -314,27 +324,161 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
 
     json_parse_text(s_resp, out->text, sizeof(out->text));
 
+    /* Inline-keyboard press: callback_query carries the button data, the
+     * original message id and its chat. */
+    p = strstr(s_resp, "\"callback_query\":");
+    if (p != NULL) {
+        out->is_callback = true;
+        const char *q = strstr(p, "\"id\":\"");
+        if (q != NULL) {
+            q += 6;
+            size_t i = 0;
+            while (q[i] != 0 && q[i] != '"' && i < sizeof(out->callback_id) - 1) {
+                out->callback_id[i] = q[i];
+                i++;
+            }
+            out->callback_id[i] = 0;
+        }
+        q = strstr(p, "\"data\":\"");
+        if (q != NULL) {
+            q += 8;
+            size_t i = 0;
+            while (q[i] != 0 && q[i] != '"' && i < sizeof(out->callback_data) - 1) {
+                out->callback_data[i] = q[i];
+                i++;
+            }
+            out->callback_data[i] = 0;
+        }
+        q = strstr(p, "\"message_id\":");
+        if (q != NULL) {
+            out->message_id = strtoll(q + 13, NULL, 10);
+        }
+    }
+
     return TG_RC_UPDATE;
+}
+
+/* Escapes a string for a JSON body (returns the escaped length). */
+static int json_escape(const char *in, char *out, size_t cap)
+{
+    size_t o = 0;
+    for (const char *p = in; *p != 0; p++) {
+        char tmp[8];
+        const char *rep = NULL;
+        unsigned char c = (unsigned char)*p;
+        if (c == '"') {
+            rep = "\\\"";
+        } else if (c == '\\') {
+            rep = "\\\\";
+        } else if (c == '\n') {
+            rep = "\\n";
+        } else if (c == '\r') {
+            rep = "\\r";
+        } else if (c == '\t') {
+            rep = "\\t";
+        } else if (c < 0x20) {
+            snprintf(tmp, sizeof(tmp), "\\u%04x", c);
+            rep = tmp;
+        }
+        size_t rl = rep ? strlen(rep) : 1;
+        if (o + rl >= cap) {
+            break;
+        }
+        if (rep) {
+            memcpy(out + o, rep, rl);
+            o += rl;
+        } else {
+            out[o++] = (char)c;
+        }
+    }
+    out[o] = 0;
+    return (int)o;
+}
+
+/* Calls a Bot API method with a JSON body; 0 on HTTP 200, -1 otherwise. */
+static int tg_api_post(const char *method, const char *body, int *http_status)
+{
+    const app_settings_t *settings = app_settings_get();
+    char path[192];
+    snprintf(path, sizeof(path), "/bot%s/%s", settings->tg_token, method);
+    int status = 0;
+    int n = tg_session_post(path, body, 15000, &status);
+    if (http_status) {
+        *http_status = status;
+    }
+    if (n < 0) {
+        return -1;
+    }
+    return status == 200 ? 0 : -1;
 }
 
 int tg_send_message(int64_t chat_id, const char *text)
 {
-    const app_settings_t *settings = app_settings_get();
-    static char resp[2048];
-    char enc[1024];
-    char path[1536];
-    int status = 0;
-
-    net_url_encode(text, enc, sizeof(enc));
-    snprintf(path, sizeof(path),
-             "/bot%s/sendMessage?chat_id=%lld&text=%s",
-             settings->tg_token, (long long)chat_id, enc);
-
-    int n = tg_session_get(path, resp, sizeof(resp), 20000, &status);
-    if (n > 0 && status != 200) {
-        ESP_LOGW(TAG, "sendMessage HTTP %d", status);
+    char esc[2048];
+    json_escape(text, esc, sizeof(esc));
+    int n = snprintf(s_req_body, sizeof(s_req_body),
+                     "{\"chat_id\":%lld,\"text\":\"%s\",\"parse_mode\":\"HTML\","
+                     "\"disable_web_page_preview\":true}",
+                     (long long)chat_id, esc);
+    if (n <= 0 || n >= (int)sizeof(s_req_body)) {
+        return -1;
     }
-    return n;
+    return tg_api_post("sendMessage", s_req_body, NULL) == 0 ? 1 : -1;
+}
+
+int tg_send_menu(int64_t chat_id, const char *text, const char *reply_markup)
+{
+    char esc[2048];
+    json_escape(text, esc, sizeof(esc));
+    int n = snprintf(s_req_body, sizeof(s_req_body),
+                     "{\"chat_id\":%lld,\"text\":\"%s\",\"parse_mode\":\"HTML\","
+                     "\"disable_web_page_preview\":true,\"reply_markup\":%s}",
+                     (long long)chat_id, esc,
+                     reply_markup ? reply_markup : "{\"inline_keyboard\":[]}");
+    if (n <= 0 || n >= (int)sizeof(s_req_body)) {
+        return -1;
+    }
+    return tg_api_post("sendMessage", s_req_body, NULL) == 0 ? 1 : -1;
+}
+
+int tg_edit_menu(int64_t chat_id, int64_t message_id, const char *text,
+                 const char *reply_markup)
+{
+    char esc[2048];
+    json_escape(text, esc, sizeof(esc));
+    int n = snprintf(s_req_body, sizeof(s_req_body),
+                     "{\"chat_id\":%lld,\"message_id\":%lld,\"text\":\"%s\","
+                     "\"parse_mode\":\"HTML\",\"disable_web_page_preview\":true,"
+                     "\"reply_markup\":%s}",
+                     (long long)chat_id, (long long)message_id, esc,
+                     reply_markup ? reply_markup : "{\"inline_keyboard\":[]}");
+    if (n <= 0 || n >= (int)sizeof(s_req_body)) {
+        return -1;
+    }
+    int status = 0;
+    if (tg_api_post("editMessageText", s_req_body, &status) == 0) {
+        return 0;
+    }
+    /* "message is not modified" is a 400 but means the edit is a no-op. */
+    return status == 400 ? 0 : -1;
+}
+
+void tg_answer_callback(const char *callback_id, const char *text)
+{
+    if (callback_id == NULL || callback_id[0] == 0) {
+        return;
+    }
+    char esc[128] = "";
+    if (text != NULL) {
+        json_escape(text, esc, sizeof(esc));
+    }
+    int n = snprintf(s_req_body, sizeof(s_req_body),
+                     "{\"callback_query_id\":\"%s\",\"text\":\"%s\"}",
+                     callback_id, esc);
+    if (n <= 0 || n >= (int)sizeof(s_req_body)) {
+        return;
+    }
+    tg_api_post("answerCallbackQuery", s_req_body, NULL);
 }
 
 int tg_probe_ex(int timeout_ms, int *stage)
