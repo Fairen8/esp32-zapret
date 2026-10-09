@@ -27,6 +27,8 @@
 #include "stats.h"
 #include "telegram.h"
 #include "wol.h"
+#include "net_scan.h"
+#include "net_utils.h"
 
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 1, 0)
 #error "esp32-zapret requires ESP-IDF v5.1 or newer"
@@ -425,7 +427,7 @@ static void fool_str(uint32_t f, char *out, size_t cap)
     "{\"text\":\"🧭 Стратегия\",\"callback_data\":\"strat\"}," \
     "{\"text\":\"🌐 Сеть\",\"callback_data\":\"net\"}],[" \
     "{\"text\":\"🧠 Память\",\"callback_data\":\"heap\"}," \
-    "{\"text\":\"💤 Wake\",\"callback_data\":\"wake\"}],[" \
+    "{\"text\":\"💤 Wake\",\"callback_data\":\"wr\"}],[" \
     "{\"text\":\"⚙️ Настройки\",\"callback_data\":\"set\"}," \
     "{\"text\":\"🔌 Перезагрузка\",\"callback_data\":\"rb\"}]]}"
 
@@ -668,6 +670,101 @@ static void do_scan(const tg_update_t *u)
     bot_screen(u, text, KB_STATUS);
 }
 
+#define KB_WAKE "{\"inline_keyboard\":[[" \
+    "{\"text\":\"📤 Отправить\",\"callback_data\":\"wk\"}," \
+    "{\"text\":\"🔍 Найти в сети\",\"callback_data\":\"ws\"}],[" \
+    "{\"text\":\"🔙 Меню\",\"callback_data\":\"m\"}]]}"
+
+static net_host_t s_arp_hosts[NET_SCAN_MAX_HOSTS];
+static int s_arp_count;
+static char s_hosts_kb[1200];
+
+static void mac_to_str(const uint8_t *mac, char *buf, size_t cap)
+{
+    snprintf(buf, cap, "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static void scr_wake(const tg_update_t *u)
+{
+    const app_settings_t *s = app_settings_get();
+    char mac[32], bcast[32];
+    esc_html(s->wol_mac[0] ? s->wol_mac : "не задан", mac, sizeof(mac));
+    esc_html(s->wol_broadcast[0] ? s->wol_broadcast : "255.255.255.255", bcast, sizeof(bcast));
+    char text[560];
+    snprintf(text, sizeof(text),
+             "💤 <b>Wake-on-LAN</b>\n"
+             "\n"
+             "Цель: <code>%s</code>\n"
+             "Broadcast: <code>%s</code> · порт %u\n"
+             "\n"
+             "• «Найти в сети» — ARP-скан включённых устройств: выбери своё, "
+             "MAC запомнится.\n"
+             "• Или пришли <code>/wake AA:BB:CC:DD:EE:FF</code> — MAC тоже "
+             "запомнится навсегда.",
+             mac, bcast, (unsigned)(s->wol_port ? s->wol_port : 9));
+    bot_screen(u, text, KB_WAKE);
+}
+
+static void do_pick_host(const tg_update_t *u, int idx)
+{
+    if (idx < 0 || idx >= s_arp_count) {
+        tg_answer_callback(u->callback_id, "Список устарел, запусти поиск заново");
+        scr_wake(u);
+        return;
+    }
+    char mac[18];
+    mac_to_str(s_arp_hosts[idx].mac, mac, sizeof(mac));
+    const app_settings_t *s = app_settings_get();
+    bool saved = app_settings_set_wol(mac, s->wol_broadcast, s->wol_port) == ESP_OK;
+    bool sent = wol_send(mac, s->wol_broadcast, s->wol_port) == 0;
+    char text[448];
+    snprintf(text, sizeof(text),
+             "💤 <b>Wake-on-LAN</b>\n"
+             "\n"
+             "MAC: <code>%s</code>%s\n"
+             "\n"
+             "%s",
+             mac,
+             saved ? "\n💾 сохранён для следующих запусков" : "",
+             sent ? "✅ Пакет отправлен." : "⚠️ Не удалось отправить пакет.");
+    bot_screen(u, text, KB_WAKE);
+}
+
+static void do_arp_scan(const tg_update_t *u)
+{
+    bot_screen(u, "⏳ <b>Ищу устройства в сети…</b>\nПара секунд.", KB_WAKE);
+    s_arp_count = net_scan_arp(s_arp_hosts, NET_SCAN_MAX_HOSTS);
+    if (s_arp_count == 0) {
+        bot_screen(u,
+                   "🔍 <b>Никого не нашёл</b>\n"
+                   "\n"
+                   "Спящий ПК не отвечает на ARP — включи его или пришли "
+                   "<code>/wake AA:BB:CC:DD:EE:FF</code>, чтобы задать MAC вручную.",
+                   KB_WAKE);
+        return;
+    }
+
+    char text[768];
+    size_t off = snprintf(text, sizeof(text), "🔍 <b>Найдено устройств: %d</b>\n\n", s_arp_count);
+    size_t k = 0;
+    k += snprintf(s_hosts_kb + k, sizeof(s_hosts_kb) - k, "{\"inline_keyboard\":[");
+    for (int i = 0; i < s_arp_count && off + 80 < sizeof(text) && k + 80 < sizeof(s_hosts_kb); i++) {
+        char mstr[18], ips[16];
+        mac_to_str(s_arp_hosts[i].mac, mstr, sizeof(mstr));
+        net_format_ip(s_arp_hosts[i].ip_be, ips, sizeof(ips));
+        off += snprintf(text + off, sizeof(text) - off, "• <code>%s</code> · %s\n", mstr, ips);
+        k += snprintf(s_hosts_kb + k, sizeof(s_hosts_kb) - k,
+                      "[{\"text\":\"%s · %s\",\"callback_data\":\"wm:%d\"}],",
+                      mstr, ips, i);
+    }
+    snprintf(text + off, sizeof(text) - off,
+             "\nВыбери устройство — MAC запомнится и сразу уйдёт WoL.");
+    snprintf(s_hosts_kb + k, sizeof(s_hosts_kb) - k,
+             "[{\"text\":\"🔙 Меню\",\"callback_data\":\"m\"}]]}");
+    bot_screen(u, text, s_hosts_kb);
+}
+
 static void do_wake(const tg_update_t *u, const char *mac_arg)
 {
     const app_settings_t *settings = app_settings_get();
@@ -676,15 +773,31 @@ static void do_wake(const tg_update_t *u, const char *mac_arg)
     if (mac_arg != NULL && mac_arg[0]) {
         copy_token(mac_arg, macbuf, sizeof(macbuf));
     }
+    if (macbuf[0] == 0) {
+        scr_wake(u);
+        return;
+    }
+
+    bool saved = false;
+    if (mac_arg != NULL && mac_arg[0] &&
+        app_settings_set_wol(macbuf, settings->wol_broadcast, settings->wol_port) == ESP_OK) {
+        saved = true;
+    }
+
     char mac_esc[32];
     esc_html(macbuf, mac_esc, sizeof(mac_esc));
-    char text[192];
-    if (wol_send(macbuf, settings->wol_broadcast, settings->wol_port) == 0) {
-        snprintf(text, sizeof(text), "💤 WoL-пакет отправлен на <code>%s</code>", mac_esc);
-    } else {
-        snprintf(text, sizeof(text), "⚠️ WoL не удался, проверьте MAC: <code>%s</code>", mac_esc);
-    }
-    bot_screen(u, text, KB_BACK);
+    bool sent = wol_send(macbuf, settings->wol_broadcast, settings->wol_port) == 0;
+    char text[448];
+    snprintf(text, sizeof(text),
+             "💤 <b>Wake-on-LAN</b>\n"
+             "\n"
+             "MAC: <code>%s</code>%s\n"
+             "\n"
+             "%s",
+             mac_esc,
+             saved ? "\n💾 сохранён для следующих запусков" : "",
+             sent ? "✅ Пакет отправлен." : "⚠️ Не удалось отправить: проверь MAC.");
+    bot_screen(u, text, KB_WAKE);
 }
 
 static void handle_callback(const tg_update_t *u)
@@ -702,8 +815,14 @@ static void handle_callback(const tg_update_t *u)
         scr_net(u);
     } else if (strcmp(d, "heap") == 0) {
         scr_heap(u);
-    } else if (strcmp(d, "wake") == 0) {
+    } else if (strcmp(d, "wr") == 0 || strcmp(d, "wake") == 0) {
+        scr_wake(u);
+    } else if (strcmp(d, "wk") == 0) {
         do_wake(u, NULL);
+    } else if (strcmp(d, "ws") == 0) {
+        do_arp_scan(u);
+    } else if (strncmp(d, "wm:", 3) == 0) {
+        do_pick_host(u, atoi(d + 3));
     } else if (strcmp(d, "sc") == 0) {
         do_scan(u);
     } else if (strcmp(d, "set") == 0) {
@@ -814,7 +933,11 @@ static void handle_update(const tg_update_t *u)
         do_scan(u);
     } else if ((args = cmd_args(text, "wake")) != NULL ||
                (args = cmd_args(text, "wol")) != NULL) {
-        do_wake(u, args);
+        if (args[0]) {
+            do_wake(u, args);
+        } else {
+            scr_wake(u);
+        }
     } else if (cmd_args(text, "reboot") != NULL) {
         bot_screen(u, "🔌 <b>Перезагрузить устройство?</b>", KB_REBOOT);
     } else if ((args = cmd_args(text, "desync")) != NULL) {

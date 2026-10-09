@@ -215,6 +215,9 @@ an external USB-UART bridge (CP210x/CH340) select
 Wake-on-LAN, settings (mode/TTL/fooling/rndsni/statistics) and a confirmed
 reboot — everything via buttons, screens update in place.
 
+The Wake screen can scan the network for awake devices (ARP) and remember the
+MAC: pick one with a button, or send `/wake AA:BB:CC:DD:EE:FF` to save it.
+
 ### Tuning TTL
 
 TTL is the main knob. The fake must reach the DPI but must not reach the server:
