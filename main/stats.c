@@ -74,10 +74,12 @@ static void last_save(int64_t ts)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        s_last = ts;
         return;
     }
     if (nvs_set_i64(h, NVS_KEY_LAST, ts) == ESP_OK) {
         nvs_commit(h);
+        s_last = ts;
     }
     nvs_close(h);
 }
@@ -179,16 +181,19 @@ static void boot_ring_check(void)
 void stats_anon_init(void)
 {
     nvs_handle_t h;
+    bool have_pref = false;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
         uint8_t v = 0;
         if (nvs_get_u8(h, NVS_KEY_ENABLED, &v) == ESP_OK) {
             s_enabled = v != 0;
-        } else {
-#if CONFIG_APP_STATS_DEFAULT_ON
-            s_enabled = true;
-#endif
+            have_pref = true;
         }
         nvs_close(h);
+    }
+    if (!have_pref) {
+#if CONFIG_APP_STATS_DEFAULT_ON
+        s_enabled = true;
+#endif
     }
     last_load();
     seed_init();
