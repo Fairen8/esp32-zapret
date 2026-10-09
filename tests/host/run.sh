@@ -26,6 +26,11 @@ echo "== net utils tests =="
 "$CC" $CFLAGS -I"$ROOT/main" test_net.c "$ROOT/main/net_utils.c" -o "$OUT/net_tests"
 "$OUT/net_tests"
 
+echo "== desync host allowlist tests =="
+"$CC" $CFLAGS -I"$ROOT/components/esp_desync" test_hosts.c \
+    "$ROOT/components/esp_desync/desync_hosts.c" -o "$OUT/hosts_tests"
+"$OUT/hosts_tests"
+
 echo "== scanner candidate tests =="
 "$CC" $CFLAGS \
     -Istub \

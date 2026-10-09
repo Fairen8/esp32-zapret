@@ -181,6 +181,9 @@ jobs:
             printf 'Each directory contains the individual binaries and a flash.bat.\n'
             printf 'Flash esp32-zapret-merged.bin at 0x0 with any ESP flash tool\n'
             printf '(esptool, Flash Download Tool, ESP Web Tools) or run flash.bat.\n'
+            printf 'NOTE: the merged image contains a blank NVS partition: flashing\n'
+            printf 'it over a configured device wipes Wi-Fi/token/WoL settings.\n'
+            printf 'To keep the configuration, update only esp32-zapret.bin at 0x10000.\n'
           } > "$pkg/firmware/README.txt"
           (cd pkg && zip -r "../esp32-zapret-v${VERSION}.zip" esp32-zapret)
 

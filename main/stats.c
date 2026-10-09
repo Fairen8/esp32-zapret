@@ -15,6 +15,8 @@
 #include "esp_random.h"
 #include "mbedtls/md.h"
 #include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #if defined(CONFIG_SOC_TEMP_SENSOR_SUPPORTED) && CONFIG_SOC_TEMP_SENSOR_SUPPORTED
 #include "driver/temperature_sensor.h"
 #endif
@@ -66,6 +68,10 @@ static err_slot_t s_errs[ERR_SLOTS];
 static unsigned char s_seed[16];
 static bool s_seed_ok;
 
+/* Serializes report building/sending: the web UI task can trigger a manual
+ * report while the main loop is in a periodic tick. */
+static SemaphoreHandle_t s_lock;
+
 #if defined(CONFIG_SOC_TEMP_SENSOR_SUPPORTED) && CONFIG_SOC_TEMP_SENSOR_SUPPORTED
 static temperature_sensor_handle_t s_temp;
 #endif
@@ -74,10 +80,12 @@ static void last_save(int64_t ts)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        s_last = ts;
         return;
     }
     if (nvs_set_i64(h, NVS_KEY_LAST, ts) == ESP_OK) {
         nvs_commit(h);
+        s_last = ts;
     }
     nvs_close(h);
 }
@@ -178,17 +186,23 @@ static void boot_ring_check(void)
 
 void stats_anon_init(void)
 {
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
     nvs_handle_t h;
+    bool have_pref = false;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
         uint8_t v = 0;
         if (nvs_get_u8(h, NVS_KEY_ENABLED, &v) == ESP_OK) {
             s_enabled = v != 0;
-        } else {
-#if CONFIG_APP_STATS_DEFAULT_ON
-            s_enabled = true;
-#endif
+            have_pref = true;
         }
         nvs_close(h);
+    }
+    if (!have_pref) {
+#if CONFIG_APP_STATS_DEFAULT_ON
+        s_enabled = true;
+#endif
     }
     last_load();
     seed_init();
@@ -448,7 +462,7 @@ static bool connect_stats(https_conn_t *conn)
     return false;
 }
 
-static void send_report(const char *event)
+static void send_report_locked(const char *event)
 {
     stats_payload_t p;
     collect(&p, event);
@@ -472,6 +486,20 @@ static void send_report(const char *event)
         ESP_LOGD(TAG, "report sent (%s)", event);
     } else {
         ESP_LOGD(TAG, "report not sent: HTTP %d", status);
+    }
+}
+
+static void send_report(const char *event)
+{
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    if (s_lock != NULL) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+    }
+    send_report_locked(event);
+    if (s_lock != NULL) {
+        xSemaphoreGive(s_lock);
     }
 }
 

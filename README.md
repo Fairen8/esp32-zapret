@@ -90,6 +90,10 @@ AP может просто дропнуть незашифрованный fake.
 | `tlsrec` | `tlsrec` (tpws) | переписывает ClientHello в две TLS-записи, чтобы DPI не собрал SNI |
 | `seqovl` | `seqovl` | фейк со сдвинутым назад seq перекрывает голову потока (`CONFIG_ESP_DESYNC_SEQOVL_LEN`, по умолчанию 32 байта) |
 
+Обход применяется только к хостам из allowlist (по умолчанию
+`api.telegram.org`, настраивается `CONFIG_ESP_DESYNC_HOSTS`): статистика, DoH
+и веб-UI ходят напрямую, поэтому активная стратегия не может их сломать.
+
 Fooling для фейка: `TTL` (дефолт), `MD5SIG` (Linux-серверы молча дропают пакет с
 TCP MD5 option), `BADSUM` (не проходит через домашние NAT с conntrack-проверкой
 чексумм), `BADSEQ` (seq выводится из окна), `DATANOACK` (без флага ACK),
