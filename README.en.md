@@ -205,6 +205,7 @@ an external USB-UART bridge (CP210x/CH340) select
 /scan                       re-run strategy auto-detection (drops manual tuning)
 /strategy                   current strategy and probe statistics
 /stats on|off               anonymous statistics (on by default)
+/help                       help (also /start)
 /heap                       free/minimum heap and largest block
 /ip                         IP, gateway, SSID, RSSI
 /reboot                     restart the device

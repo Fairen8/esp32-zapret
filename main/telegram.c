@@ -37,6 +37,12 @@ static char s_resp[RESP_MAX];
 static char s_last_endpoint[16];
 static int s_last_status;
 
+/* Persistent keep-alive session: without it every poll and every reply paid a
+ * full TCP+TLS handshake (1-3 s on classic ESP32). */
+static https_conn_t s_sess;
+static bool s_sess_open;
+static bool s_cmd_menu_done;
+
 static int tg_connect(https_conn_t *c, int timeout_ms)
 {
     uint32_t ips[16];
@@ -69,17 +75,85 @@ static int tg_connect(https_conn_t *c, int timeout_ms)
     return -1;
 }
 
-static int tg_http_get(const char *path, char *resp, size_t resp_sz, int timeout_ms, int *status)
+static void tg_session_close(void)
 {
-    https_conn_t conn;
+    if (s_sess_open) {
+        https_close(&s_sess);
+        s_sess_open = false;
+    }
+}
 
-    if (tg_connect(&conn, timeout_ms) != 0) {
+/* Registers the command menu once per boot (cosmetic, best effort). */
+static void tg_set_commands_once(void)
+{
+    if (s_cmd_menu_done) {
+        return;
+    }
+    s_cmd_menu_done = true;
+
+    static const char menu[] =
+        "{\"commands\":["
+        "{\"command\":\"status\",\"description\":\"состояние устройства\"},"
+        "{\"command\":\"scan\",\"description\":\"перебрать стратегии заново\"},"
+        "{\"command\":\"strategy\",\"description\":\"текущая стратегия и статистика\"},"
+        "{\"command\":\"wake\",\"description\":\"Wake-on-LAN пакет\"},"
+        "{\"command\":\"desync\",\"description\":\"режим обхода\"},"
+        "{\"command\":\"ttl\",\"description\":\"TTL фейка\"},"
+        "{\"command\":\"fool\",\"description\":\"метод фулинга\"},"
+        "{\"command\":\"rndsni\",\"description\":\"случайный decoy SNI\"},"
+        "{\"command\":\"heap\",\"description\":\"память (heap)\"},"
+        "{\"command\":\"ip\",\"description\":\"IP, шлюз, Wi-Fi\"},"
+        "{\"command\":\"stats\",\"description\":\"анонимная статистика\"},"
+        "{\"command\":\"reboot\",\"description\":\"перезагрузить\"},"
+        "{\"command\":\"help\",\"description\":\"справка\"}"
+        "]}";
+
+    const app_settings_t *settings = app_settings_get();
+    char path[192];
+    snprintf(path, sizeof(path), "/bot%s/setMyCommands", settings->tg_token);
+
+    https_conn_t conn;
+    if (tg_connect(&conn, 8000) == 0) {
+        int status = 0;
+        https_post_json(&conn, path, menu, 8000, &status);
+        https_close(&conn);
+        ESP_LOGD(TAG, "setMyCommands HTTP %d", status);
+    }
+}
+
+/* Sends a keep-alive request over the session, reconnecting once if the
+ * connection died. Returns body bytes or -1. */
+static int tg_session_get(const char *path, char *resp, size_t resp_sz,
+                          int timeout_ms, int *status)
+{
+    if (s_sess_open || tg_connect(&s_sess, 8000) == 0) {
+        s_sess_open = true;
+    } else {
         s_last_status = 0;
         return -1;
     }
-    int n = https_request(&conn, path, "application/json", resp, resp_sz, timeout_ms, status);
-    https_close(&conn);
+
+    bool alive = false;
+    int n = https_request_ka(&s_sess, path, "application/json", resp, resp_sz,
+                             timeout_ms, status, &alive);
     s_last_status = status ? *status : 0;
+    if (n < 0) {
+        tg_session_close();
+        /* One retry on a fresh connection (the peer may have closed an idle
+         * keep-alive socket while the device was busy scanning). */
+        if (tg_connect(&s_sess, 8000) != 0) {
+            s_last_status = 0;
+            return -1;
+        }
+        s_sess_open = true;
+        alive = false;
+        n = https_request_ka(&s_sess, path, "application/json", resp, resp_sz,
+                             timeout_ms, status, &alive);
+        s_last_status = status ? *status : 0;
+    }
+    if (n < 0 || !alive) {
+        tg_session_close();
+    }
     return n;
 }
 
@@ -205,11 +279,12 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
     const app_settings_t *settings = app_settings_get();
     char path[256];
     snprintf(path, sizeof(path),
-             "/bot%s/getUpdates?timeout=%d&offset=%lld",
+             "/bot%s/getUpdates?timeout=%d&offset=%lld"
+             "&allowed_updates=%%5B%%22message%%22%%5D",
              settings->tg_token, long_poll_s, (long long)offset);
 
     int status = 0;
-    int n = tg_http_get(path, s_resp, sizeof(s_resp), long_poll_s * 1000 + 20000, &status);
+    int n = tg_session_get(path, s_resp, sizeof(s_resp), long_poll_s * 1000 + 20000, &status);
     if (n <= 0) {
         return TG_RC_TRANSPORT;
     }
@@ -217,6 +292,8 @@ int tg_get_updates(tg_update_t *out, int64_t offset, int long_poll_s)
         log_api_error(status);
         return TG_RC_HTTP;
     }
+
+    tg_set_commands_once();
 
     memset(out, 0, sizeof(*out));
 
@@ -253,7 +330,7 @@ int tg_send_message(int64_t chat_id, const char *text)
              "/bot%s/sendMessage?chat_id=%lld&text=%s",
              settings->tg_token, (long long)chat_id, enc);
 
-    int n = tg_http_get(path, resp, sizeof(resp), 20000, &status);
+    int n = tg_session_get(path, resp, sizeof(resp), 20000, &status);
     if (n > 0 && status != 200) {
         ESP_LOGW(TAG, "sendMessage HTTP %d", status);
     }
