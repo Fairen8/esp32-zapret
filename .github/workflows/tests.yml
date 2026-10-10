@@ -121,6 +121,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Pre-pull ESP-IDF image (retry on registry hiccups)
+        run: |
+          for i in 1 2 3; do
+            if docker pull espressif/idf:v5.3.6; then
+              exit 0
+            fi
+            echo "docker pull failed (attempt $i), retrying..."
+            sleep 20
+          done
+          exit 1
+
       - name: Build with ESP-IDF
         uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
         with:
