@@ -45,12 +45,15 @@ model, secure design principles and input handling.
   same certificate-verified TLS stack as normal operation.
 - **Anonymous telemetry, on by default.** Anonymous statistics are enabled by
   default (opt-out via `/stats off`, the web UI toggle, or
-  `APP_STATS_DEFAULT_ON=n` at build time). The schema-2 report carries
-  diagnostics (tried strategies, heap/Wi-Fi/error counters, config) but no
-  stable identifiers: no device/chat IDs, no SSIDs, no IP addresses. The `rid`
-  pseudonym is HMAC of a device-local secret and the current UTC day and cannot
-  be linked across days. Reports use the same verified TLS stack and are
-  silently skipped when unavailable.
+  `APP_STATS_DEFAULT_ON=n` at build time). The schema-3 report carries
+  diagnostics (tried strategies, heap/Wi-Fi/error counters, config) and is
+  signed with HMAC-SHA256 when a key is configured (`CFG_STATS_HMAC_KEY` in
+  `secrets.h` or a per-device NVS `rkey`); reports also carry a stable
+  pseudonym `dev` (HMAC of the eFuse MAC, used for per-device keys and
+  revocation) and a monotonic `seq` + `nonce` for replay protection. No
+  device/chat IDs, SSIDs or IP addresses are sent; the `rid` pseudonym rotates
+  daily. Reports use the same verified TLS stack and are silently skipped when
+  unavailable.
 
 ## Input validation
 

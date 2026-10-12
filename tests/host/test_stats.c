@@ -54,6 +54,9 @@ int main(void)
     p.psram = false;
     p.chip_rev = 301;
     p.sni_cat = 1;
+    p.dev = "0123456789abcdef";
+    p.seq = 7;
+    p.nonce = 305419896;
     p.rid = "0123456789abcdef";
 
     char buf[1024];
@@ -62,7 +65,7 @@ int main(void)
     CHECK((size_t)n == strlen(buf));
 
     const char *expect =
-        "{\"schema\":2,\"event\":\"boot\",\"fw\":\"1.2.0\",\"target\":\"esp32\","
+        "{\"schema\":3,\"event\":\"boot\",\"fw\":\"1.2.0\",\"target\":\"esp32\","
         "\"uptime_s\":42,\"heap\":123456,\"min_heap\":98765,\"max_block\":65536,"
         "\"rssi\":-55,\"reset\":3,"
         "\"mode\":5,\"fool\":1,\"ttl\":5,\"split1\":-1,\"split2\":-1,"
@@ -74,7 +77,9 @@ int main(void)
         "\"mtu\":1500,\"sntp_s\":3,\"sntp_ok\":true,"
         "\"doh\":0,\"ch\":6,\"stage\":0,\"cfg\":15,"
         "\"cpu_mhz\":160,\"flash_free\":630784,\"psram\":false,"
-        "\"chip_rev\":301,\"sni_cat\":1,\"rid\":\"0123456789abcdef\"}";
+        "\"chip_rev\":301,\"sni_cat\":1,"
+        "\"dev\":\"0123456789abcdef\",\"seq\":7,\"nonce\":305419896,"
+        "\"rid\":\"0123456789abcdef\"}";
     CHECK(strcmp(buf, expect) == 0);
     if (strcmp(buf, expect) != 0) {
         printf("got: %s\n", buf);

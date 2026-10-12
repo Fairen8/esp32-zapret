@@ -27,3 +27,10 @@
 #define CFG_WOL_MAC        "AA:BB:CC:DD:EE:FF"
 #define CFG_WOL_BROADCAST  "255.255.255.255"
 #define CFG_WOL_PORT       9
+
+/* HMAC-SHA256 key for signing anonymous statistics reports (schema 3).
+ * 32+ bytes as hex (64 hex chars, ideally random). Empty = reports are sent
+ * unsigned (the server decides how much to trust them). Can be overridden per
+ * device by an NVS blob "rkey" in the "stats" namespace. */
+#define CFG_STATS_HMAC_KEY ""
+

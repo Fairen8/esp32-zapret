@@ -137,6 +137,10 @@ failure stage, config and hardware. There are no stable identifiers: no device
 or chat IDs, SSIDs, IP addresses. The only pseudonym is `rid` = HMAC(local
 secret, current day); it rotates daily and cannot link a device across days.
 
+Since v1.5.0 reports are signed with HMAC-SHA256: the key comes from
+`CFG_STATS_HMAC_KEY` (`secrets.h`) or a per-device NVS `rkey`; without a key
+reports are sent unsigned and the server decides how much to trust them.
+
 Disable with `/stats off` (persisted in NVS) or the web UI toggle; re-enable
 with `/stats on`. Build with `CONFIG_APP_STATS_DEFAULT_ON=n` to opt out by
 default. A report is sent at boot and at most once a day; if the server is
