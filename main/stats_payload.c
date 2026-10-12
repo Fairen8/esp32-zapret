@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include "stats_payload.h"
 
-#define STATS_SCHEMA 2
+#define STATS_SCHEMA 3
 
 int stats_build_payload(const stats_payload_t *in, char *buf, size_t cap)
 {
@@ -23,7 +23,8 @@ int stats_build_payload(const stats_payload_t *in, char *buf, size_t cap)
                      "\"mtu\":%u,\"sntp_s\":%u,\"sntp_ok\":%s,"
                      "\"doh\":%u,\"ch\":%u,\"stage\":%u,\"cfg\":%u,"
                      "\"cpu_mhz\":%u,\"flash_free\":%u,\"psram\":%s,"
-                     "\"chip_rev\":%u,\"sni_cat\":%u,\"rid\":\"%s\"}",
+                     "\"chip_rev\":%u,\"sni_cat\":%u,"
+                     "\"dev\":\"%s\",\"seq\":%u,\"nonce\":%u,\"rid\":\"%s\"}",
                      STATS_SCHEMA,
                      in->event ? in->event : "",
                      in->fw ? in->fw : "",
@@ -64,6 +65,9 @@ int stats_build_payload(const stats_payload_t *in, char *buf, size_t cap)
                      in->psram ? "true" : "false",
                      (unsigned)in->chip_rev,
                      (unsigned)in->sni_cat,
+                     in->dev ? in->dev : "",
+                     (unsigned)in->seq,
+                     (unsigned)in->nonce,
                      in->rid ? in->rid : "");
     if (n <= 0 || n >= (int)cap) {
         return -1;

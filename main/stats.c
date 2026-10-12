@@ -13,6 +13,7 @@
 #include "esp_ota_ops.h"
 #include "esp_image_format.h"
 #include "esp_random.h"
+#include "esp_mac.h"
 #include "mbedtls/md.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -25,6 +26,7 @@
 #include "https_client.h"
 #include "doh.h"
 #include "fw_version.h"
+#include "app_config.h"
 #include "stats_payload.h"
 #include "stats.h"
 
@@ -35,6 +37,8 @@ static const char *TAG = "stats";
 #define NVS_KEY_LAST    "last"
 #define NVS_KEY_SEED    "seed"
 #define NVS_KEY_BOOTS   "boots"
+#define NVS_KEY_SEQ     "seq"
+#define NVS_KEY_RKEY    "rkey"
 #define STATS_PATH      "/api/v1/report"
 #define BOOT_MIN_GAP_S  3600
 #define SEND_TIMEOUT_MS 8000
@@ -43,6 +47,8 @@ static const char *TAG = "stats";
 #define BOOT_RING_MAX   8
 #define ERR_SLOTS       6
 #define ERR_TOP         4
+/* Failed sends retry at most every 15 minutes (never on every loop tick). */
+#define RETRY_BACKOFF_S 900
 
 typedef struct {
     uint32_t idx;
@@ -67,6 +73,13 @@ static err_slot_t s_errs[ERR_SLOTS];
 
 static unsigned char s_seed[16];
 static bool s_seed_ok;
+
+/* Reporting key: NVS blob "rkey" (per-device) or CFG_STATS_HMAC_KEY. */
+static unsigned char s_key[32];
+static bool s_key_ok;
+static uint32_t s_seq;
+static int64_t s_last_try; /* unix seconds of the last send attempt, 0 = never */
+static uint32_t s_last_uptime;
 
 /* Serializes report building/sending: the web UI task can trigger a manual
  * report while the main loop is in a periodic tick. */
@@ -128,6 +141,23 @@ static void seed_init(void)
 
 /* rid = first 8 bytes of HMAC-SHA256(seed, day) in hex: a pseudonym that
  * rotates daily and cannot be linked across days without the local secret. */
+static bool hmac_sha256(const void *key, size_t klen, const void *msg, size_t mlen,
+                        unsigned char out[32])
+{
+    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    return md != NULL && mbedtls_md_hmac(md, key, klen, msg, mlen, out) == 0;
+}
+
+static void hex8(const unsigned char *in, char out[17])
+{
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 8; i++) {
+        out[i * 2] = hex[in[i] >> 4];
+        out[i * 2 + 1] = hex[in[i] & 0x0f];
+    }
+    out[16] = 0;
+}
+
 static void rid_build(char out[17])
 {
     out[0] = 0;
@@ -137,18 +167,89 @@ static void rid_build(char out[17])
     char day[16];
     snprintf(day, sizeof(day), "%u", (unsigned)(time(NULL) / 86400));
     unsigned char mac[32];
-    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    if (md == NULL ||
-        mbedtls_md_hmac(md, s_seed, sizeof(s_seed),
-                        (const unsigned char *)day, strlen(day), mac) != 0) {
+    if (!hmac_sha256(s_seed, sizeof(s_seed), day, strlen(day), mac)) {
         return;
     }
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 8; i++) {
-        out[i * 2] = hex[mac[i] >> 4];
-        out[i * 2 + 1] = hex[mac[i] & 0x0f];
+    hex8(mac, out);
+}
+
+/* Stable pseudonym derived from the eFuse MAC: used for per-device keys and
+ * revocation; not a secret (the MAC cannot be recovered from it). */
+static void dev_build(char out[17])
+{
+    out[0] = 0;
+    uint8_t mac[6] = { 0 };
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+        return;
     }
-    out[16] = 0;
+    unsigned char h[32];
+    static const char ctx[] = "esp32-zapret-device-id";
+    if (!hmac_sha256(ctx, sizeof(ctx) - 1, mac, sizeof(mac), h)) {
+        return;
+    }
+    hex8(h, out);
+}
+
+static int hexval(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static void key_init(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        size_t sz = sizeof(s_key);
+        if (nvs_get_blob(h, NVS_KEY_RKEY, s_key, &sz) == ESP_OK && sz == sizeof(s_key)) {
+            s_key_ok = true;
+        }
+        nvs_close(h);
+    }
+    if (s_key_ok) {
+        return;
+    }
+    const char *hex = CFG_STATS_HMAC_KEY;
+    int n = 0;
+    while (hex[0] != 0 && hex[1] != 0 && n < (int)sizeof(s_key)) {
+        int hi = hexval(hex[0]);
+        int lo = hexval(hex[1]);
+        if (hi < 0 || lo < 0) {
+            break;
+        }
+        s_key[n++] = (uint8_t)((hi << 4) | lo);
+        hex += 2;
+    }
+    s_key_ok = n >= 16;
+}
+
+static void seq_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    uint32_t v = 0;
+    if (nvs_get_u32(h, NVS_KEY_SEQ, &v) == ESP_OK) {
+        s_seq = v;
+    }
+    nvs_close(h);
+}
+
+/* Monotonic counter persisted across reboots (anti-replay on the server). */
+static uint32_t seq_next(void)
+{
+    s_seq++;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_set_u32(h, NVS_KEY_SEQ, s_seq) == ESP_OK) {
+            nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    return s_seq;
 }
 
 /* Reset-loop detector: 3+ boots within 10 minutes (persisted in NVS). */
@@ -206,6 +307,8 @@ void stats_anon_init(void)
     }
     last_load();
     seed_init();
+    key_init();
+    seq_load();
     boot_ring_check();
 #if defined(CONFIG_SOC_TEMP_SENSOR_SUPPORTED) && CONFIG_SOC_TEMP_SENSOR_SUPPORTED
     temperature_sensor_config_t tcfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
@@ -375,6 +478,7 @@ static void collect(stats_payload_t *p, const char *event)
     static scan_telemetry_t tel;
     static char errs_buf[48];
     static char rid[17];
+    static char dev[17];
 
     memset(p, 0, sizeof(*p));
     p->event = event;
@@ -444,6 +548,9 @@ static void collect(stats_payload_t *p, const char *event)
 
     rid_build(rid);
     p->rid = rid;
+    dev_build(dev);
+    p->dev = dev;
+    p->nonce = esp_random();
 }
 
 static bool connect_stats(https_conn_t *conn)
@@ -462,13 +569,76 @@ static bool connect_stats(https_conn_t *conn)
     return false;
 }
 
+/* Local sanity invariants: garbage samples are dropped instead of being signed
+ * and sent. */
+static bool payload_sane(const stats_payload_t *p)
+{
+    if (p->free_heap == 0 || p->free_heap > 8u * 1024 * 1024) {
+        return false;
+    }
+    if (p->min_heap > p->free_heap) {
+        return false;
+    }
+    if (p->probe_fails > p->probes) {
+        return false;
+    }
+    if (p->ttl == 0) {
+        return false;
+    }
+    if (p->uptime_s + 5 < s_last_uptime) {
+        return false; /* uptime must not go backwards within one boot */
+    }
+    return true;
+}
+
+/* Canonical body + `,"sig":"<hex>"}`; without a key the report goes unsigned
+ * (the server decides how much to trust it). */
+static int sign_body(const char *canonical, char *out, size_t cap)
+{
+    size_t cl = strlen(canonical);
+    if (cl < 2 || canonical[cl - 1] != '}') {
+        return -1;
+    }
+    if (!s_key_ok) {
+        strlcpy(out, canonical, cap);
+        return (int)strlen(out);
+    }
+    unsigned char mac[32];
+    if (!hmac_sha256(s_key, sizeof(s_key), canonical, cl, mac)) {
+        return -1;
+    }
+    static const char hx[] = "0123456789abcdef";
+    char hex[65];
+    for (int i = 0; i < 32; i++) {
+        hex[i * 2] = hx[mac[i] >> 4];
+        hex[i * 2 + 1] = hx[mac[i] & 0x0f];
+    }
+    hex[64] = 0;
+    int n = snprintf(out, cap, "%.*s,\"sig\":\"%s\"}", (int)(cl - 1), canonical, hex);
+    if (n <= 0 || n >= (int)cap) {
+        return -1;
+    }
+    return n;
+}
+
 static void send_report_locked(const char *event)
 {
+    static char body[1280];
+    static char signed_body[1408];
+
     stats_payload_t p;
     collect(&p, event);
+    if (!payload_sane(&p)) {
+        ESP_LOGD(TAG, "report skipped: sanity check failed");
+        return;
+    }
+    s_last_uptime = p.uptime_s;
+    p.seq = seq_next();
 
-    char body[1024];
     if (stats_build_payload(&p, body, sizeof(body)) < 0) {
+        return;
+    }
+    if (sign_body(body, signed_body, sizeof(signed_body)) < 0) {
         return;
     }
 
@@ -479,11 +649,11 @@ static void send_report_locked(const char *event)
     }
 
     int status = 0;
-    int r = https_post_json(&conn, STATS_PATH, body, SEND_TIMEOUT_MS, &status);
+    int r = https_post_json(&conn, STATS_PATH, signed_body, SEND_TIMEOUT_MS, &status);
     https_close(&conn);
     if (r > 0 && status >= 200 && status < 300) {
         last_save((int64_t)time(NULL));
-        ESP_LOGD(TAG, "report sent (%s)", event);
+        ESP_LOGD(TAG, "report sent (%s, seq %u)", event, (unsigned)p.seq);
     } else {
         ESP_LOGD(TAG, "report not sent: HTTP %d", status);
     }
@@ -510,13 +680,25 @@ void stats_anon_report(const char *event)
     }
 
     int64_t now = (int64_t)time(NULL);
-    if (now > 0 && s_last > 0) {
-        if (strcmp(event, "periodic") == 0 && now - s_last < CONFIG_APP_STATS_INTERVAL_S) {
-            return;
+    if (now > 0) {
+        /* Failed attempts retry on the backoff, never on every loop tick. */
+        if (strcmp(event, "periodic") == 0) {
+            if (s_last > 0 && now - s_last < CONFIG_APP_STATS_INTERVAL_S) {
+                return;
+            }
+            if (s_last_try > 0 && now - s_last_try < RETRY_BACKOFF_S) {
+                return;
+            }
         }
-        if (strcmp(event, "boot") == 0 && now - s_last < BOOT_MIN_GAP_S) {
-            return;
+        if (strcmp(event, "boot") == 0) {
+            if (s_last > 0 && now - s_last < BOOT_MIN_GAP_S) {
+                return;
+            }
+            if (s_last_try > 0 && now - s_last_try < RETRY_BACKOFF_S) {
+                return;
+            }
         }
+        s_last_try = now;
     }
     send_report(event);
 }

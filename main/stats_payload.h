@@ -53,9 +53,15 @@ typedef struct {
     uint16_t chip_rev;         /* MXX: major * 100 + minor */
     uint8_t  sni_cat;          /* decoy SNI category: 1 iana, 2 yandex, 3 mailru,
                                 * 4 custom, 5 random */
+    /* schema 3 */
+    const char *dev;           /* stable pseudonym: HMAC(context, eFuse MAC), 16 hex */
+    uint32_t seq;              /* monotonic report counter (persisted in NVS) */
+    uint32_t nonce;            /* random per report (anti-replay) */
     const char *rid;           /* rotating id: HMAC(local secret, day), 16 hex */
 } stats_payload_t;
 
-/* Builds a flat JSON object (schema 2). Returns the length (excluding the
- * terminating NUL) or -1 when it would not fit. */
+/* Builds the canonical flat JSON object (schema 3) WITHOUT the `sig` member;
+ * the sender signs these exact bytes and appends `,"sig":"<hmac-hex>"}` before
+ * the closing brace. Returns the length (excluding the terminating NUL) or -1
+ * when it would not fit. */
 int stats_build_payload(const stats_payload_t *in, char *buf, size_t cap);

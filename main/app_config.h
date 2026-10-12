@@ -16,3 +16,6 @@
 #ifndef CFG_TG_API_IPS
 #define CFG_TG_API_IPS ""
 #endif
+#ifndef CFG_STATS_HMAC_KEY
+#define CFG_STATS_HMAC_KEY ""
+#endif
