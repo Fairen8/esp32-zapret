@@ -65,25 +65,25 @@ jobs:
           fetch-depth: 0
 
       - name: Download firmware (esp32)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: firmware-esp32
           path: fw/esp32
 
       - name: Download firmware (esp32s3)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: firmware-esp32s3
           path: fw/esp32s3
 
       - name: Download firmware (esp32c3)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: firmware-esp32c3
           path: fw/esp32c3
 
       - name: Download firmware (esp32, no bot)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: firmware-esp32-nobot
           path: fw/esp32-nobot
